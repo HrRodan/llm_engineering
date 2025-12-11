@@ -33,7 +33,7 @@ Section 4 = NEW WEEK 4
 Section 5 = NEW WEEK 5  
 Section 6 = NEW WEEK 6  
 Section 7 = Original Week 7   
-Section 8 = Original Week 8   
+Section 8 = Original Week 8 
 
 Then as an appendix / archive:
 

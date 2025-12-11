@@ -1,0 +1,8 @@
+{
+    "search.exclude": {
+        "**/community-contributions": true
+    },
+    "python.analysis.exclude": [
+        "**/community-contributions"
+    ]
+}
