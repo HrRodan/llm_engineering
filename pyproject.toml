@@ -54,8 +54,8 @@ dependencies = [
 
 [tool.pyrefly]
 project-includes = ["**/*.py","**/*.ipynb"]
-project-excludes = ["**/node_modules", "**/__pycache__", "**/*venv/**", "**/.[!/.]*/**"]
+project-excludes = ["**/node_modules", "**/__pycache__", "**/*venv/**", "**/.[!/.]*/**","**/community-contributions/**"]
 use-ignore-files = true
-search-path = [".","./week1"]
+search-path = ["."]
 python-version = "3.12"
 
