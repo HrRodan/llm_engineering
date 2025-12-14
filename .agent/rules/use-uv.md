@@ -2,7 +2,7 @@
 trigger: always_on
 ---
 
-The package and project manager is uv. Important Commands:
+The package and project manager is uv. Run scripts with "uv run script.py" Important Commands:
 | Command | Example | Action |
 | :--- | :--- | :--- |
 | **`uv run`** | `uv run main.py` | Run a script/command in the managed environment. |

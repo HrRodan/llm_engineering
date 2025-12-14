@@ -23,6 +23,7 @@ GPTModels = Literal[
     "gpt-5.1",
     "gpt-5.2",
     "gpt-4.1-mini",
+    "gpt-5.2-pro",
 ]
 
 OllamaModels = Literal["llama3.2", "deepseek-r1:1.5b"]
@@ -40,6 +41,7 @@ OpenRouterModels = Literal[
     "openai/gpt-oss-120b",
     "deepseek/deepseek-v3.2",
     "x-ai/grok-4",
+    "anthropic/claude-opus-4.5",
 ]
 
 ModelName = Union[GPTModels, OllamaModels, GeminiModels, OpenRouterModels]
@@ -130,75 +132,165 @@ class LLMQuery:
             raise ValueError(f"Model {self.model} not supported")
         return client
 
+    def _prepare_messages(
+        self, user_prompt: Union[str, List[Dict[str, str]]], use_history: bool
+    ) -> List[Dict[str, str]]:
+        """
+        Prepare the list of messages for the API call.
+
+        Args:
+            user_prompt: The user's input.
+            use_history: Whether to include chat history.
+
+        Returns:
+            List of message dictionaries.
+        """
+        messages = [{"role": "system", "content": self.system_prompt}]
+        if use_history:
+            messages.extend(self.chat_history)
+
+        if isinstance(user_prompt, list):
+            messages.extend(user_prompt)
+        else:
+            messages.append({"role": "user", "content": user_prompt})
+        return messages
+
+    def _prepare_request_kwargs(
+        self,
+        messages: List[Dict[str, str]],
+        stream: bool,
+        json_format: bool,
+        reasoning_effort: Optional[str] = None,
+        **kwargs,
+    ) -> Dict:
+        """
+        Prepare the keyword arguments for the API call.
+        """
+        request_kwargs = {"model": self.model, "messages": messages}
+        if json_format:
+            request_kwargs["response_format"] = {"type": "json_object"}
+        if stream:
+            request_kwargs["stream"] = True
+        if reasoning_effort:
+            request_kwargs["reasoning_effort"] = reasoning_effort
+
+        # Include any additional kwargs
+        request_kwargs.update(kwargs)
+
+        return request_kwargs
+
+    def _update_history(
+        self, user_prompt: Union[str, List[Dict[str, str]]], response_content: str
+    ):
+        """
+        Update the chat history with the user prompt and assistant response.
+        """
+        if isinstance(user_prompt, list):
+            self.chat_history.extend(user_prompt)
+        else:
+            self.chat_history.append({"role": "user", "content": user_prompt})
+
+        self.chat_history.append({"role": "assistant", "content": response_content})
+
     def query(
         self,
         user_prompt: Union[str, List[Dict[str, str]]],
         use_history: bool = False,
         display_output: bool = False,
-        stream: Optional[bool] = None,
         json_format: Optional[bool] = None,
         reasoning_effort: Optional[str] = None,
-        stream_chunks: bool = False,
-    ) -> Union[str, Generator[str, None, None]]:
+        **kwargs,
+    ) -> str:
         """
-        Send a query to the LLM and get the response.
+        Send a non-streaming query to the LLM.
 
         Args:
-            user_prompt (Union[str, List[Dict[str, str]]]): The prompt to send to the LLM.
-                Can be a string or a list of message dictionaries.
-            use_history (bool, optional): Whether to include chat history in the context. Defaults to False.
-            display_output (bool, optional): Whether to display the output using IPython display. Defaults to False.
-            stream (bool, optional): Whether to stream the response. Overrides instance setting if provided. Models specific behavior.
-            json_format (bool, optional): Whether to request JSON format response. Overrides instance setting.
-            reasoning_effort (str, optional): Effort level for reasoning models (e.g. o1).
-            stream_chunks (bool, optional): If True, yields chunks of the response as they arrive. Implies stream=True.
+            user_prompt: The prompt to send.
+            use_history: Whether to include chat history.
+            display_output: Whether to display the output using IPython display.
+            json_format: Whether to request JSON format (overrides instance default).
+            reasoning_effort: Effort level for reasoning models.
+            **kwargs: Additional arguments passed to the API call.
 
         Returns:
-            Union[str, Generator[str, None, None]]: The response text, or a generator yielding response chunks if stream_chunks is True.
+            The response text.
         """
-        # --- Value Resolution ---
-        if stream is None:
-            stream = self.stream
-        if json_format is None:
-            json_format = self.json_format
+        # Resolve defaults
+        json_format = json_format if json_format is not None else self.json_format
 
-        # Force stream=True if stream_chunks is requested to ensure generator is returned/used
-        if stream_chunks:
-            stream = True
+        messages = self._prepare_messages(user_prompt, use_history)
+        request_kwargs = self._prepare_request_kwargs(
+            messages,
+            stream=False,
+            json_format=json_format,
+            reasoning_effort=reasoning_effort,
+            **kwargs,
+        )
 
-        # --- Message Construction ---
-        messages = [{"role": "system", "content": self.system_prompt}]
-        if use_history:
-            messages.extend(self.chat_history)
+        response = self.client.chat.completions.create(
+            **request_kwargs
+        )  # pyrefly: ignore
+        content = response.choices[0].message.content
 
-        # Handle user_prompt being a string or a list of message dicts
-        # If list, it's appended directly (assumed to be correct format)
-        if isinstance(user_prompt, list):
-            messages.extend(user_prompt)
-        else:
-            messages.append({"role": "user", "content": user_prompt})
+        # Update state
+        self.response = content
+        self._update_history(user_prompt, content)
 
-        # --- Request Preparation ---
-        kwargs = {"model": self.model, "messages": messages}
-        if json_format:
-            kwargs["response_format"] = {"type": "json_object"}
-        if stream:
-            kwargs["stream"] = True
-        if reasoning_effort:
-            kwargs["reasoning_effort"] = reasoning_effort
+        if display_output:
+            self.display_response()
 
-        # Make the API call
-        response = self.client.chat.completions.create(**kwargs)  # pyrefly: ignore
+        return content
 
-        # --- Generator Definition ---
-        # Inner generator function to handle streaming and history update side-effects
+    def query_stream(
+        self,
+        user_prompt: Union[str, List[Dict[str, str]]],
+        use_history: bool = False,
+        display_output: bool = False,
+        json_format: Optional[bool] = None,
+        reasoning_effort: Optional[str] = None,
+        return_generator: bool = True,
+        **kwargs,
+    ) -> Union[str, Generator[str, None, None]]:
+        """
+        Send a streaming query to the LLM.
+
+        Args:
+            user_prompt: The prompt to send.
+            use_history: Whether to include chat history.
+            display_output: Whether to display the output incrementally using IPython display.
+            json_format: Whether to request JSON format (overrides instance default).
+            reasoning_effort: Effort level for reasoning models.
+            return_generator: If True, returns a generator yielding chunks. If False, returns the full response string.
+            **kwargs: Additional arguments passed to the API call.
+
+        Yields:
+            Chunks of the response text as they arrive (if return_generator=True).
+        Returns:
+            The full response string (if return_generator=False).
+        """
+        # Resolve defaults
+        json_format = json_format if json_format is not None else self.json_format
+
+        messages = self._prepare_messages(user_prompt, use_history)
+        request_kwargs = self._prepare_request_kwargs(
+            messages,
+            stream=True,
+            json_format=json_format,
+            reasoning_effort=reasoning_effort,
+            **kwargs,
+        )
+
+        response_stream = self.client.chat.completions.create(
+            **request_kwargs
+        )  # pyrefly: ignore
+
         def stream_generator():
             output = ""
             display_handle = None
             if display_output:
                 display_handle = display(Markdown(output), display_id=True)
 
-            for chunk in response:
+            for chunk in response_stream:
                 content = chunk.choices[0].delta.content
                 if content:
                     output += content
@@ -206,42 +298,18 @@ class LLMQuery:
                         display_handle.update(Markdown(output))  # pyrefly: ignore
                     yield output
 
+            # Update state after stream finishes
             self.response = output
+            self._update_history(user_prompt, output)
 
-            # Update chat history (only after full stream is consumed)
-            if isinstance(user_prompt, list):
-                self.chat_history.extend(user_prompt)
-            else:
-                self.chat_history.append({"role": "user", "content": user_prompt})
+        gen = stream_generator()
 
-            self.chat_history.append({"role": "assistant", "content": self.response})
-
-        # --- Execution Handling ---
-        if stream:
-            gen = stream_generator()
-            if stream_chunks:
-                # Return the generator directly for external consumption
-                return gen
-            else:
-                # Consume generator fully to execute side effects (display + history)
-                # This makes the method synchronous but simulated streaming display
-                for _ in gen:
-                    pass
-                return self.response
+        if return_generator:
+            return gen
         else:
-            # --- Non-Streaming Handling ---
-            self.response = response.choices[0].message.content
-            if display_output:
-                self.display_response()
-
-            # Update chat history
-            if isinstance(user_prompt, list):
-                self.chat_history.extend(user_prompt)
-            else:
-                self.chat_history.append({"role": "user", "content": user_prompt})
-
-            self.chat_history.append({"role": "assistant", "content": self.response})
-
+            # Consume generator to ensure side effects run
+            for _ in gen:
+                pass
             return self.response
 
     def display_response(self):

@@ -22,7 +22,7 @@ def fetch_website_contents(url):
         text = soup.body.get_text(separator="\n", strip=True)
     else:
         text = ""
-    return ((title or url) + "\n\n" + text)[:5_000]
+    return ((title or url) + "\n\n" + text)[:10_000]
 
 
 def fetch_website_links(url):
