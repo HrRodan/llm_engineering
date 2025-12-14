@@ -99,14 +99,16 @@ class LLMQuery:
         self.model = model
         self.stream = stream
         self.json_format = json_format
-        self.client = self.get_client()
         self.system_prompt = system_prompt
         self.chat_history: List[Dict[str, str]] = []
         self.response = ""
 
-    def get_client(self) -> OpenAI:
+    def _get_client_for_model(self, model: str) -> OpenAI:
         """
-        Get the OpenAI client for the configured model.
+        Get the OpenAI client for the specified model.
+
+        Args:
+            model: The model name to get the client for.
 
         Returns:
             OpenAI: The OpenAI client instance.
@@ -114,23 +116,33 @@ class LLMQuery:
         Raises:
             ValueError: If the model is not supported.
         """
-        if self.model in MODEL_DICT["gpt"]:
+        if model in MODEL_DICT["gpt"]:
             client = OpenAI()
-        elif self.model in MODEL_DICT["ollama"]:
+        elif model in MODEL_DICT["ollama"]:
             client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")
-        elif self.model in MODEL_DICT["gemini"]:
+        elif model in MODEL_DICT["gemini"]:
             client = OpenAI(
                 base_url=GEMINI_BASE_URL,
                 api_key=GOOGLE_API_KEY,
             )
-        elif self.model in MODEL_DICT["openrouter"]:
+        elif model in MODEL_DICT["openrouter"]:
             client = OpenAI(
                 base_url=OPENROUTER_BASE_URL,
                 api_key=OPENROUTER_API_KEY,
             )
         else:
-            raise ValueError(f"Model {self.model} not supported")
+            raise ValueError(f"Model {model} not supported")
         return client
+
+    @property
+    def client(self) -> OpenAI:
+        """
+        Get the OpenAI client for the configured model.
+
+        Returns:
+            OpenAI: The OpenAI client instance.
+        """
+        return self._get_client_for_model(self.model)
 
     def _prepare_messages(
         self, user_prompt: Union[str, List[Dict[str, str]]], use_history: bool
@@ -160,13 +172,15 @@ class LLMQuery:
         messages: List[Dict[str, str]],
         stream: bool,
         json_format: bool,
+        model: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
         **kwargs,
     ) -> Dict:
         """
         Prepare the keyword arguments for the API call.
         """
-        request_kwargs = {"model": self.model, "messages": messages}
+        target_model = model if model else self.model
+        request_kwargs = {"model": target_model, "messages": messages}
         if json_format:
             request_kwargs["response_format"] = {"type": "json_object"}
         if stream:
@@ -195,6 +209,7 @@ class LLMQuery:
     def query(
         self,
         user_prompt: Union[str, List[Dict[str, str]]],
+        model: Optional[ModelName] = None,
         use_history: bool = False,
         display_output: bool = False,
         json_format: Optional[bool] = None,
@@ -206,6 +221,7 @@ class LLMQuery:
 
         Args:
             user_prompt: The prompt to send.
+            model: Optional model to use, overriding the default instance model.
             use_history: Whether to include chat history.
             display_output: Whether to display the output using IPython display.
             json_format: Whether to request JSON format (overrides instance default).
@@ -217,19 +233,20 @@ class LLMQuery:
         """
         # Resolve defaults
         json_format = json_format if json_format is not None else self.json_format
+        target_model = model if model else self.model
+        client = self._get_client_for_model(target_model)
 
         messages = self._prepare_messages(user_prompt, use_history)
         request_kwargs = self._prepare_request_kwargs(
             messages,
             stream=False,
             json_format=json_format,
+            model=target_model,
             reasoning_effort=reasoning_effort,
             **kwargs,
         )
 
-        response = self.client.chat.completions.create(
-            **request_kwargs
-        )  # pyrefly: ignore
+        response = client.chat.completions.create(**request_kwargs)  # pyrefly: ignore
         content = response.choices[0].message.content
 
         # Update state
@@ -244,6 +261,7 @@ class LLMQuery:
     def query_stream(
         self,
         user_prompt: Union[str, List[Dict[str, str]]],
+        model: Optional[ModelName] = None,
         use_history: bool = False,
         display_output: bool = False,
         json_format: Optional[bool] = None,
@@ -256,6 +274,7 @@ class LLMQuery:
 
         Args:
             user_prompt: The prompt to send.
+            model: Optional model to use, overriding the default instance model.
             use_history: Whether to include chat history.
             display_output: Whether to display the output incrementally using IPython display.
             json_format: Whether to request JSON format (overrides instance default).
@@ -270,17 +289,20 @@ class LLMQuery:
         """
         # Resolve defaults
         json_format = json_format if json_format is not None else self.json_format
+        target_model = model if model else self.model
+        client = self._get_client_for_model(target_model)
 
         messages = self._prepare_messages(user_prompt, use_history)
         request_kwargs = self._prepare_request_kwargs(
             messages,
             stream=True,
             json_format=json_format,
+            model=target_model,
             reasoning_effort=reasoning_effort,
             **kwargs,
         )
 
-        response_stream = self.client.chat.completions.create(
+        response_stream = client.chat.completions.create(
             **request_kwargs
         )  # pyrefly: ignore
 
@@ -342,4 +364,6 @@ class LLMQuery:
 
 
 if __name__ == "__main__":
-    llm = LLMQuery(system_prompt="", model="gemini-2.5-flash")
+    llm = LLMQuery(system_prompt="", model="gemini-flash-lite-latest")
+    a = llm.query(user_prompt="Hi", display_output=True)
+    print(a)
