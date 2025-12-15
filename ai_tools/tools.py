@@ -77,9 +77,6 @@ def pretty_print_json(data):
 
 
 class LLMQuery:
-    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-
     def __init__(
         self,
         system_prompt: str = "",
@@ -283,7 +280,7 @@ class LLMQuery:
             **kwargs: Additional arguments passed to the API call.
 
         Yields:
-            Chunks of the response text as they arrive (if return_generator=True).
+            Accumulated response text as it arrives (if return_generator=True).
         Returns:
             The full response string (if return_generator=False).
         """
