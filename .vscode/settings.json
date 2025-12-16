@@ -4,5 +4,6 @@
     },
     "python.analysis.exclude": [
         "**/community-contributions"
-    ]
+    ],
+    "sqltools.useNodeRuntime": true
 }

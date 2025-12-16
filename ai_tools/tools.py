@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Dict, List, Literal, get_args, Union, Generator, Optional
+from typing import Dict, List, Literal, get_args, Union, Generator, Optional, Any
 
 from dotenv import load_dotenv
 from IPython.display import Markdown, display
@@ -83,6 +83,8 @@ class LLMQuery:
         model: ModelName = "gemini-flash-lite-latest",
         stream: bool = False,
         json_format: bool = False,
+        tools: Optional[List[Dict]] = None,
+        tool_choice: Optional[Union[str, Dict]] = None,
     ):
         """
         Initialize the LLMQuery instance.
@@ -92,12 +94,17 @@ class LLMQuery:
             model (ModelName, optional): The model to use. Defaults to "gemini-flash-lite-latest".
             stream (bool, optional): Whether to stream the response by default. Defaults to False.
             json_format (bool, optional): Whether to request JSON format by default. Defaults to False.
+            tools (List[Dict], optional): List of tools to be available to the model. Defaults to None.
+            tool_choice (Union[str, Dict], optional): Tool choice strategy. Defaults to None.
         """
         self.model = model
         self.stream = stream
         self.json_format = json_format
+        self.tools = tools
+        self.tool_choice = tool_choice
         self.system_prompt = system_prompt
-        self.chat_history: List[Dict[str, str]] = []
+        self.chat_history: List[Dict[str, Any]] = []
+        self.tool_calls: List[Dict] = []
         self.response = ""
 
     def _get_client_for_model(self, model: str) -> OpenAI:
@@ -142,7 +149,9 @@ class LLMQuery:
         return self._get_client_for_model(self.model)
 
     def _prepare_messages(
-        self, user_prompt: Union[str, List[Dict[str, str]]], use_history: bool
+        self,
+        user_prompt: Union[str, List[Dict[str, str]], None],
+        use_history: bool,
     ) -> List[Dict[str, str]]:
         """
         Prepare the list of messages for the API call.
@@ -158,10 +167,16 @@ class LLMQuery:
         if use_history:
             messages.extend(self.chat_history)
 
-        if isinstance(user_prompt, list):
-            messages.extend(user_prompt)
-        else:
-            messages.append({"role": "user", "content": user_prompt})
+        if user_prompt is not None:
+            if isinstance(user_prompt, list):
+                messages.extend(user_prompt)
+            else:
+                messages.append({"role": "user", "content": user_prompt})
+
+        # Ensure at least one message exists besides system prompt to satisfy APIs like Gemini
+        if len(messages) == 1:
+            messages.append({"role": "user", "content": ""})
+
         return messages
 
     def _prepare_request_kwargs(
@@ -171,6 +186,8 @@ class LLMQuery:
         json_format: bool,
         model: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
+        tools: Optional[List[Dict]] = None,
+        tool_choice: Optional[Union[str, Dict]] = None,
         **kwargs,
     ) -> Dict:
         """
@@ -178,6 +195,18 @@ class LLMQuery:
         """
         target_model = model if model else self.model
         request_kwargs = {"model": target_model, "messages": messages}
+
+        # Tools handling
+        target_tools = tools if tools is not None else self.tools
+        target_tool_choice = (
+            tool_choice if tool_choice is not None else self.tool_choice
+        )
+
+        if target_tools:
+            request_kwargs["tools"] = target_tools
+        if target_tool_choice:
+            request_kwargs["tool_choice"] = target_tool_choice
+
         if json_format:
             request_kwargs["response_format"] = {"type": "json_object"}
         if stream:
@@ -191,26 +220,36 @@ class LLMQuery:
         return request_kwargs
 
     def _update_history(
-        self, user_prompt: Union[str, List[Dict[str, str]]], response_content: str
+        self,
+        user_prompt: Union[str, List[Dict[str, str]], None],
+        response_content: Optional[str],
+        tool_calls: Optional[List[Dict]] = None,
     ):
         """
         Update the chat history with the user prompt and assistant response.
         """
-        if isinstance(user_prompt, list):
-            self.chat_history.extend(user_prompt)
-        else:
-            self.chat_history.append({"role": "user", "content": user_prompt})
+        if user_prompt is not None:
+            if isinstance(user_prompt, list):
+                self.chat_history.extend(user_prompt)
+            else:
+                self.chat_history.append({"role": "user", "content": user_prompt})
 
-        self.chat_history.append({"role": "assistant", "content": response_content})
+        assistant_msg = {"role": "assistant", "content": response_content}
+        if tool_calls:
+            assistant_msg["tool_calls"] = tool_calls
+
+        self.chat_history.append(assistant_msg)
 
     def query(
         self,
-        user_prompt: Union[str, List[Dict[str, str]]],
+        user_prompt: Union[str, List[Dict[str, str]], None] = None,
         model: Optional[ModelName] = None,
         use_history: bool = False,
         display_output: bool = False,
         json_format: Optional[bool] = None,
         reasoning_effort: Optional[str] = None,
+        tools: Optional[List[Dict]] = None,
+        tool_choice: Optional[Union[str, Dict]] = None,
         **kwargs,
     ) -> str:
         """
@@ -223,6 +262,8 @@ class LLMQuery:
             display_output: Whether to display the output using IPython display.
             json_format: Whether to request JSON format (overrides instance default).
             reasoning_effort: Effort level for reasoning models.
+            tools: Optional list of tools to use.
+            tool_choice: Optional tool choice strategy.
             **kwargs: Additional arguments passed to the API call.
 
         Returns:
@@ -233,6 +274,9 @@ class LLMQuery:
         target_model = model if model else self.model
         client = self._get_client_for_model(target_model)
 
+        # Reset tool calls
+        self.tool_calls = []
+
         messages = self._prepare_messages(user_prompt, use_history)
         request_kwargs = self._prepare_request_kwargs(
             messages,
@@ -240,30 +284,41 @@ class LLMQuery:
             json_format=json_format,
             model=target_model,
             reasoning_effort=reasoning_effort,
+            tools=tools,
+            tool_choice=tool_choice,
             **kwargs,
         )
 
         response = client.chat.completions.create(**request_kwargs)  # pyrefly: ignore
-        content = response.choices[0].message.content
+        message = response.choices[0].message
+        content = message.content
+
+        # Handle tool calls
+        if message.tool_calls:
+            self.tool_calls = [tc.model_dump() for tc in message.tool_calls]
 
         # Update state
-        self.response = content
-        self._update_history(user_prompt, content)
+        self.response = content if content is not None else ""
+        self._update_history(
+            user_prompt, content, self.tool_calls if self.tool_calls else None
+        )
 
         if display_output:
             self.display_response()
 
-        return content
+        return self.response
 
     def query_stream(
         self,
-        user_prompt: Union[str, List[Dict[str, str]]],
+        user_prompt: Union[str, List[Dict[str, str]], None] = None,
         model: Optional[ModelName] = None,
         use_history: bool = False,
         display_output: bool = False,
         json_format: Optional[bool] = None,
         reasoning_effort: Optional[str] = None,
         return_generator: bool = True,
+        tools: Optional[List[Dict]] = None,
+        tool_choice: Optional[Union[str, Dict]] = None,
         **kwargs,
     ) -> Union[str, Generator[str, None, None]]:
         """
@@ -277,6 +332,8 @@ class LLMQuery:
             json_format: Whether to request JSON format (overrides instance default).
             reasoning_effort: Effort level for reasoning models.
             return_generator: If True, returns a generator yielding chunks. If False, returns the full response string.
+            tools: Optional list of tools to use.
+            tool_choice: Optional tool choice strategy.
             **kwargs: Additional arguments passed to the API call.
 
         Yields:
@@ -289,6 +346,9 @@ class LLMQuery:
         target_model = model if model else self.model
         client = self._get_client_for_model(target_model)
 
+        # Reset tool calls
+        self.tool_calls = []
+
         messages = self._prepare_messages(user_prompt, use_history)
         request_kwargs = self._prepare_request_kwargs(
             messages,
@@ -296,6 +356,8 @@ class LLMQuery:
             json_format=json_format,
             model=target_model,
             reasoning_effort=reasoning_effort,
+            tools=tools,
+            tool_choice=tool_choice,
             **kwargs,
         )
 
@@ -306,20 +368,56 @@ class LLMQuery:
         def stream_generator():
             output = ""
             display_handle = None
+            collected_tool_calls = {}
+
             if display_output:
                 display_handle = display(Markdown(output), display_id=True)
 
             for chunk in response_stream:
-                content = chunk.choices[0].delta.content
+                delta = chunk.choices[0].delta
+                content = delta.content
+
+                # Handle content
                 if content:
                     output += content
                     if display_handle:
                         display_handle.update(Markdown(output))  # pyrefly: ignore
                     yield output
 
+                # Handle tool calls
+                if delta.tool_calls:
+                    for tc_chunk in delta.tool_calls:
+                        idx = tc_chunk.index
+                        if idx not in collected_tool_calls:
+                            collected_tool_calls[idx] = {
+                                "id": "",
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            }
+
+                        if tc_chunk.id:
+                            collected_tool_calls[idx]["id"] += tc_chunk.id
+
+                        if tc_chunk.function:
+                            if tc_chunk.function.name:
+                                collected_tool_calls[idx]["function"]["name"] += (
+                                    tc_chunk.function.name
+                                )
+                            if tc_chunk.function.arguments:
+                                collected_tool_calls[idx]["function"]["arguments"] += (
+                                    tc_chunk.function.arguments
+                                )
+
             # Update state after stream finishes
             self.response = output
-            self._update_history(user_prompt, output)
+            if collected_tool_calls:
+                self.tool_calls = list(collected_tool_calls.values())
+
+            self._update_history(
+                user_prompt,
+                output if output else None,
+                self.tool_calls if self.tool_calls else None,
+            )
 
         gen = stream_generator()
 
@@ -330,6 +428,24 @@ class LLMQuery:
             for _ in gen:
                 pass
             return self.response
+
+    def append_tool_result(self, tool_outputs: List[Dict[str, str]]):
+        """
+        Append the results of tool executions to the chat history.
+
+        Args:
+            tool_outputs: A list of dictionaries, where each dictionary contains:
+                - tool_call_id: The ID of the tool call.
+                - output: The output of the tool execution as a string.
+        """
+        for tool_output in tool_outputs:
+            self.chat_history.append(
+                {
+                    "role": "tool",
+                    "content": tool_output["output"],
+                    "tool_call_id": tool_output["tool_call_id"],
+                }
+            )
 
     def display_response(self):
         """Display the response in the notebook using Markdown or JSON pretty print."""
@@ -353,6 +469,14 @@ class LLMQuery:
                 history.append(f"**User**: {content}")
             elif role == "Assistant":
                 history.append(f"**Assistant**: {content}")
+                if "tool_calls" in msg:
+                    for tool_call in msg["tool_calls"]:
+                        func_name = tool_call["function"]["name"]
+                        args = tool_call["function"]["arguments"]
+                        history.append(f"**Assistant Tool Call**: {func_name}({args})")
+            elif role == "Tool":
+                history.append(f"**Tool Output**: {content}")
+
         return "\n\n".join(history)
 
     def display_chat_history(self):
