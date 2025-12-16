@@ -76,11 +76,42 @@ def pretty_print_json(data):
         print(f"Error prettifying JSON: {e}")
 
 
+def handle_tool_call(tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Handle LLM tool calls by executing the corresponding functions.
+
+    Iterates over a list of tool calls, looks up the function in the global namespace,
+    executes it with the provided arguments, and collects the results.
+
+    Args:
+        tool_calls (List[Dict]): A list of tool call dictionaries from the LLM response.
+            Each dictionary should contain 'function' with 'name' and 'arguments', and an 'id'.
+
+    Returns:
+        List[Dict]: A list of tool response dictionaries containing 'tool_call_id' and 'output'.
+    """
+    tool_response = []
+    for tool_call in tool_calls:
+        # Extract the function name and parse arguments from the tool call
+        function_name = tool_call["function"]["name"]
+        arguments = json.loads(tool_call["function"]["arguments"])
+
+        # Dynamically find and call the function by name from global scope
+        if function_name in globals():
+            function_to_call = globals()[function_name]
+            result = function_to_call(**arguments)
+            tool_response.append({"tool_call_id": tool_call["id"], "output": result})
+        else:
+            print(f"Warning: Function {function_name} not found")
+
+    return tool_response
+
+
 class LLMQuery:
     def __init__(
         self,
         system_prompt: str = "",
-        model: ModelName = "gemini-flash-lite-latest",
+        model: ModelName = "gemini-flash-latest",
         stream: bool = False,
         json_format: bool = False,
         tools: Optional[List[Dict]] = None,
@@ -244,7 +275,7 @@ class LLMQuery:
         self,
         user_prompt: Union[str, List[Dict[str, str]], None] = None,
         model: Optional[ModelName] = None,
-        use_history: bool = False,
+        use_history: bool = True,
         display_output: bool = False,
         json_format: Optional[bool] = None,
         reasoning_effort: Optional[str] = None,
@@ -312,7 +343,7 @@ class LLMQuery:
         self,
         user_prompt: Union[str, List[Dict[str, str]], None] = None,
         model: Optional[ModelName] = None,
-        use_history: bool = False,
+        use_history: bool = True,
         display_output: bool = False,
         json_format: Optional[bool] = None,
         reasoning_effort: Optional[str] = None,
