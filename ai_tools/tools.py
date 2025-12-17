@@ -1,6 +1,19 @@
 import json
 import os
-from typing import Dict, List, Literal, get_args, Union, Generator, Optional, Any
+import base64
+import io
+from PIL import Image
+from typing import (
+    Dict,
+    List,
+    Literal,
+    get_args,
+    Union,
+    Generator,
+    Optional,
+    Any,
+    Callable,
+)
 
 from dotenv import load_dotenv
 from IPython.display import Markdown, display
@@ -24,6 +37,9 @@ GPTModels = Literal[
     "gpt-5.2",
     "gpt-4.1-mini",
     "gpt-5.2-pro",
+    "gpt-image-1.5",
+    "gpt-4o-mini-tts",
+    "tts-1",
 ]
 
 OllamaModels = Literal["llama3.2", "deepseek-r1:1.5b"]
@@ -34,6 +50,8 @@ GeminiModels = Literal[
     "gemini-2.5-flash-lite",
     "gemini-flash-latest",
     "gemini-flash-lite-latest",
+    "models/imagen-4.0-generate-001",
+    "gemini-2.5-pro-preview-tts",
 ]
 
 OpenRouterModels = Literal[
@@ -76,33 +94,44 @@ def pretty_print_json(data):
         print(f"Error prettifying JSON: {e}")
 
 
-def handle_tool_call(tool_calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def handle_tool_call(
+    tool_calls: List[Dict[str, Any]], functions: List[Callable]
+) -> List[Dict[str, Any]]:
     """
     Handle LLM tool calls by executing the corresponding functions.
 
-    Iterates over a list of tool calls, looks up the function in the global namespace,
+    Iterates over a list of tool calls, looks up the function in the provided list,
     executes it with the provided arguments, and collects the results.
 
     Args:
         tool_calls (List[Dict]): A list of tool call dictionaries from the LLM response.
             Each dictionary should contain 'function' with 'name' and 'arguments', and an 'id'.
+        functions (List[Callable]): A list of functions that can be called.
 
     Returns:
-        List[Dict]: A list of tool response dictionaries containing 'tool_call_id' and 'output'.
+        List[Dict]: A list of tool response dictionaries containing 'tool_call_id', 'output', 'arguments', and 'name'.
     """
     tool_response = []
+    function_map = {f.__name__: f for f in functions}
+
     for tool_call in tool_calls:
         # Extract the function name and parse arguments from the tool call
         function_name = tool_call["function"]["name"]
         arguments = json.loads(tool_call["function"]["arguments"])
 
-        # Dynamically find and call the function by name from global scope
-        if function_name in globals():
-            function_to_call = globals()[function_name]
+        if function_name in function_map:
+            function_to_call = function_map[function_name]
             result = function_to_call(**arguments)
-            tool_response.append({"tool_call_id": tool_call["id"], "output": result})
+            tool_response.append(
+                {
+                    "tool_call_id": tool_call["id"],
+                    "output": result,
+                    "arguments": arguments,
+                    "name": function_name,
+                }
+            )
         else:
-            print(f"Warning: Function {function_name} not found")
+            print(f"Warning: Function {function_name} not found in provided functions")
 
     return tool_response
 
@@ -116,6 +145,9 @@ class LLMQuery:
         json_format: bool = False,
         tools: Optional[List[Dict]] = None,
         tool_choice: Optional[Union[str, Dict]] = None,
+        functions: Optional[List[Callable]] = None,
+        image_model: str = "models/imagen-4.0-generate-001",
+        tts_model: str = "gpt-4o-mini-tts",
     ):
         """
         Initialize the LLMQuery instance.
@@ -127,11 +159,20 @@ class LLMQuery:
             json_format (bool, optional): Whether to request JSON format by default. Defaults to False.
             tools (List[Dict], optional): List of tools to be available to the model. Defaults to None.
             tool_choice (Union[str, Dict], optional): Tool choice strategy. Defaults to None.
+            functions (List[Callable], optional): List of functions to be available to the model. Defaults to None.
+            image_model (str, optional): The image generation model to use. Defaults to "models/imagen-4.0-generate-001".
+            tts_model (str, optional): The TTS model to use. Defaults to "tts-1".
         """
         self.model = model
+        self.image_model = image_model
+        self.tts_model = tts_model
         self.stream = stream
         self.json_format = json_format
         self.tools = tools
+        if functions is None:
+            self.functions = []
+        else:
+            self.functions = functions
         self.tool_choice = tool_choice
         self.system_prompt = system_prompt
         self.chat_history: List[Dict[str, Any]] = []
@@ -225,7 +266,7 @@ class LLMQuery:
         Prepare the keyword arguments for the API call.
         """
         target_model = model if model else self.model
-        request_kwargs = {"model": target_model, "messages": messages}
+        request_kwargs: Dict[str, Any] = {"model": target_model, "messages": messages}
 
         # Tools handling
         target_tools = tools if tools is not None else self.tools
@@ -257,7 +298,7 @@ class LLMQuery:
         tool_calls: Optional[List[Dict]] = None,
     ):
         """
-        Update the chat history with the user prompt and assistant response.
+        Update the chat history with the user prompt, assistant response and results from tool calls.
         """
         if user_prompt is not None:
             if isinstance(user_prompt, list):
@@ -265,7 +306,10 @@ class LLMQuery:
             else:
                 self.chat_history.append({"role": "user", "content": user_prompt})
 
-        assistant_msg = {"role": "assistant", "content": response_content}
+        assistant_msg: Dict[str, Any] = {
+            "role": "assistant",
+            "content": response_content,
+        }
         if tool_calls:
             assistant_msg["tool_calls"] = tool_calls
 
@@ -320,7 +364,7 @@ class LLMQuery:
             **kwargs,
         )
 
-        response = client.chat.completions.create(**request_kwargs)  # pyrefly: ignore
+        response = client.chat.completions.create(**request_kwargs)
         message = response.choices[0].message
         content = message.content
 
@@ -392,9 +436,7 @@ class LLMQuery:
             **kwargs,
         )
 
-        response_stream = client.chat.completions.create(
-            **request_kwargs
-        )  # pyrefly: ignore
+        response_stream = client.chat.completions.create(**request_kwargs)
 
         def stream_generator():
             output = ""
@@ -412,7 +454,7 @@ class LLMQuery:
                 if content:
                     output += content
                     if display_handle:
-                        display_handle.update(Markdown(output))  # pyrefly: ignore
+                        display_handle.update(Markdown(output))
                     yield output
 
                 # Handle tool calls
@@ -470,10 +512,18 @@ class LLMQuery:
                 - output: The output of the tool execution as a string.
         """
         for tool_output in tool_outputs:
+            output_content = tool_output["output"]
+            if isinstance(output_content, Image.Image):
+                output_content = "[Image created]"
+            elif isinstance(output_content, bytes):
+                output_content = "[Audio created]"
+            elif not isinstance(output_content, str):
+                output_content = f"[{type(output_content).__name__} object created]"
+
             self.chat_history.append(
                 {
                     "role": "tool",
-                    "content": tool_output["output"],
+                    "content": output_content,
                     "tool_call_id": tool_output["tool_call_id"],
                 }
             )
@@ -510,9 +560,113 @@ class LLMQuery:
 
         return "\n\n".join(history)
 
+    @property
+    def clean_chat_history(self) -> List[Dict[str, str]]:
+        """
+        Get the chat history as a list of dictionaries containing only role and content.
+
+        Only includes messages from 'assistant' or 'user' roles that have non-empty content.
+
+        Returns:
+            List[Dict[str, str]]: A list of dictionaries with 'role' and 'content' keys.
+        """
+        return [
+            {"role": h["role"], "content": h["content"]}
+            for h in self.chat_history
+            if h["role"] in ("assistant", "user") and h["content"]
+        ]
+
     def display_chat_history(self):
         """Display the chat history in the notebook."""
         display(Markdown(self.get_chat_history_as_string()))
+
+    def get_tool_responses(
+        self,
+        max_iterations: int = 5,
+    ) -> str:
+        """
+        Execute pending tool calls and continue the conversation until no more tool calls are made.
+
+        Args:
+            max_iterations: Maximum number of request-response cycles to prevent infinite loops.
+
+        Returns:
+            str: The final response from the assistant after all tool executions.
+        """
+        response = self.response
+        iterations = 0
+
+        while self.tool_calls and iterations < max_iterations:
+            tool_response = handle_tool_call(self.tool_calls, functions=self.functions)
+            self.append_tool_result(tool_response)
+            response = self.query(tools=self.tools)
+            iterations += 1
+
+        return response
+
+    def generate_image(
+        self,
+        prompt: str,
+        model: Optional[str] = None,
+        size: str = "1024x1024",
+        quality: str = "standard",
+    ) -> Image.Image:
+        """
+        Generate an image using the specified model.
+
+        Args:
+            prompt: The prompt to generate the image for.
+            model: Optional model to use, overriding the default instance image_model.
+            size: The size of the image to generate. Defaults to "1024x1024".
+            quality: The quality of the image to generate. Defaults to "standard".
+
+        Returns:
+            Image.Image: The generated image as a PIL Image object.
+        """
+        target_model = model if model else self.image_model
+        client = self._get_client_for_model(target_model)
+        response = client.images.generate(  # pyrefly: ignore
+            model=target_model,
+            prompt=prompt,
+            size=size,
+            quality=quality,
+            response_format="b64_json",
+        )
+
+        if not response.data or not response.data[0].b64_json:
+            raise ValueError("No image data returned from API")
+
+        image_data = base64.b64decode(response.data[0].b64_json)
+        return Image.open(io.BytesIO(image_data))
+
+    def generate_tts(
+        self,
+        text: str,
+        model: Optional[str] = None,
+        voice: str = "onyx",
+        speed: float = 1.0,
+    ) -> bytes:
+        """
+        Generate speech from text using the specified model.
+
+        Args:
+            text: The text to generate speech for.
+            model: Optional model to use, overriding the default instance tts_model.
+            voice: The voice to use for generation. Defaults to "alloy".
+            speed: The speed of the speech generation. Defaults to 1.0.
+
+        Returns:
+            bytes: The generated audio content.
+        """
+        target_model = model if model else self.tts_model
+        client = self._get_client_for_model(target_model)
+        response = client.audio.speech.create(
+            model=target_model,
+            input=text,
+            voice=voice,
+            speed=speed,
+        )
+        return response.content
 
 
 if __name__ == "__main__":
