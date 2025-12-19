@@ -1,0 +1,23 @@
+{
+  "name": "pikachu",
+  "is_legendary": false,
+  "is_mythical": false,
+  "capture_rate": 190,
+  "evolution_chain": {
+    "url": "http://example.com/chain/1"
+  },
+  "flavor_text_entries": [
+    {
+      "language": {
+        "name": "en"
+      },
+      "flavor_text": "Mouse pokemon"
+    },
+    {
+      "language": {
+        "name": "de"
+      },
+      "flavor_text": "Maus Pokemon"
+    }
+  ]
+}

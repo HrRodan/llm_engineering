@@ -502,14 +502,14 @@ class LLMQuery:
                 pass
             return self.response
 
-    def append_tool_result(self, tool_outputs: List[Dict[str, str]]):
+    def append_tool_result(self, tool_outputs: List[Dict[str, Any]]):
         """
         Append the results of tool executions to the chat history.
 
         Args:
             tool_outputs: A list of dictionaries, where each dictionary contains:
                 - tool_call_id: The ID of the tool call.
-                - output: The output of the tool execution as a string.
+                - output: The output of the tool execution.
         """
         for tool_output in tool_outputs:
             output_content = tool_output["output"]
@@ -518,7 +518,10 @@ class LLMQuery:
             elif isinstance(output_content, bytes):
                 output_content = "[Audio created]"
             elif not isinstance(output_content, str):
-                output_content = f"[{type(output_content).__name__} object created]"
+                try:
+                    output_content = json.dumps(output_content)
+                except (TypeError, ValueError):
+                    output_content = f"[{type(output_content).__name__} object created]"
 
             self.chat_history.append(
                 {
@@ -582,7 +585,7 @@ class LLMQuery:
 
     def get_tool_responses(
         self,
-        max_iterations: int = 5,
+        max_iterations: int = 10,
     ) -> str:
         """
         Execute pending tool calls and continue the conversation until no more tool calls are made.
@@ -599,7 +602,14 @@ class LLMQuery:
         while self.tool_calls and iterations < max_iterations:
             tool_response = handle_tool_call(self.tool_calls, functions=self.functions)
             self.append_tool_result(tool_response)
-            response = self.query(tools=self.tools)
+            query_response = self.query(tools=self.tools)
+
+            if query_response:
+                if response:
+                    response += "\n\n" + query_response
+                else:
+                    response = query_response
+
             iterations += 1
 
         return response

@@ -1,0 +1,91 @@
+{
+  "id": 34,
+  "items": [
+    {
+      "name": "master-ball",
+      "url": "https://pokeapi.co/api/v2/item/1/"
+    },
+    {
+      "name": "ultra-ball",
+      "url": "https://pokeapi.co/api/v2/item/2/"
+    },
+    {
+      "name": "great-ball",
+      "url": "https://pokeapi.co/api/v2/item/3/"
+    },
+    {
+      "name": "poke-ball",
+      "url": "https://pokeapi.co/api/v2/item/4/"
+    },
+    {
+      "name": "safari-ball",
+      "url": "https://pokeapi.co/api/v2/item/5/"
+    },
+    {
+      "name": "park-ball",
+      "url": "https://pokeapi.co/api/v2/item/456/"
+    },
+    {
+      "name": "sport-ball",
+      "url": "https://pokeapi.co/api/v2/item/457/"
+    },
+    {
+      "name": "lastrange-ball",
+      "url": "https://pokeapi.co/api/v2/item/2219/"
+    },
+    {
+      "name": "lapoke-ball",
+      "url": "https://pokeapi.co/api/v2/item/2220/"
+    },
+    {
+      "name": "lagreat-ball",
+      "url": "https://pokeapi.co/api/v2/item/2221/"
+    },
+    {
+      "name": "laultra-ball",
+      "url": "https://pokeapi.co/api/v2/item/2222/"
+    },
+    {
+      "name": "laheavy-ball",
+      "url": "https://pokeapi.co/api/v2/item/2223/"
+    },
+    {
+      "name": "laleaden-ball",
+      "url": "https://pokeapi.co/api/v2/item/2224/"
+    },
+    {
+      "name": "lagigaton-ball",
+      "url": "https://pokeapi.co/api/v2/item/2225/"
+    },
+    {
+      "name": "lafeather-ball",
+      "url": "https://pokeapi.co/api/v2/item/2226/"
+    },
+    {
+      "name": "lawing-ball",
+      "url": "https://pokeapi.co/api/v2/item/2227/"
+    },
+    {
+      "name": "lajet-ball",
+      "url": "https://pokeapi.co/api/v2/item/2228/"
+    },
+    {
+      "name": "laorigin-ball",
+      "url": "https://pokeapi.co/api/v2/item/2229/"
+    }
+  ],
+  "name": "standard-balls",
+  "names": [
+    {
+      "language": {
+        "name": "en",
+        "url": "https://pokeapi.co/api/v2/language/9/"
+      },
+      "name": "Standard balls"
+    }
+  ],
+  "pocket": {
+    "name": "pokeballs",
+    "url": "https://pokeapi.co/api/v2/item-pocket/3/"
+  }
+}

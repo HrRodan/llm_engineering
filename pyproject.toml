@@ -50,12 +50,13 @@ dependencies = [
     "langchain-experimental>=0.0.42",
     "groq>=0.33.0",
     "xgboost>=3.1.1",
+    "pytest>=9.0.2",
 ]
 
 [tool.pyrefly]
 project-includes = ["**/*.py","**/*.ipynb"]
-project-excludes = ["**/node_modules", "**/__pycache__", "**/*venv/**", "**/.[!/.]*/**", "**/community-contributions"]
+project-excludes = ["**/node_modules", "**/__pycache__", "**/*venv/**", "**/.[!/.]*/**", "**/community-contributions", "**/community-contributions/**", "**/community_contributions", "**/community_contributions/**"]
 use-ignore-files = true
-search-path = ["."]
+search-path = [".", "week2/solution"]
 python-version = "3.12"
 

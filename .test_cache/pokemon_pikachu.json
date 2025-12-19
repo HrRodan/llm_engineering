@@ -1,0 +1,28 @@
+{
+  "name": "pikachu",
+  "height": 4,
+  "weight": 60,
+  "stats": [
+    {
+      "stat": {
+        "name": "hp"
+      },
+      "base_stat": 35
+    }
+  ],
+  "types": [
+    {
+      "type": {
+        "name": "electric"
+      }
+    }
+  ],
+  "abilities": [
+    {
+      "ability": {
+        "name": "static"
+      },
+      "is_hidden": false
+    }
+  ]
+}
