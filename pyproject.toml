@@ -1,7 +1,7 @@
 [project]
 name = "llm-engineering"
 version = "0.1.0"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<=3.12"
 dependencies = [
     "anthropic>=0.69.0",
     "beautifulsoup4>=4.14.2",
@@ -54,12 +54,17 @@ dependencies = [
     "google>=3.0.0",
     "accelerate>=1.12.0",
     "diffusers>=0.36.0",
+    "pyrefly>=0.46.1",
+    "soundfile>=0.13.1",
 ]
 
 [tool.pyrefly]
 project-includes = ["**/*.py","**/*.ipynb"]
 project-excludes = ["**/node_modules", "**/__pycache__", "**/*venv/**", "**/.[!/.]*/**", "**/community-contributions", "**/community-contributions/**", "**/community_contributions", "**/community_contributions/**"]
 use-ignore-files = true
-search-path = [".", "week2/solution"]
-python-version = "3.12"
-
+search-path = [".", "week2/solution", "week3/solution"]
+#python-version = "3.11"
+#python-interpreter-path = ".venv/Scripts/python.exe"
+#python-platform = "win32"
+#site-package-path = [".venv/Lib/site-packages"]
+#skip-interpreter-query = true
