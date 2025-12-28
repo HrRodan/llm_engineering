@@ -2,6 +2,8 @@ import json
 import os
 import base64
 import io
+import mimetypes
+import getpass
 from PIL import Image
 from typing import (
     Dict,
@@ -25,9 +27,43 @@ OLLAMA_BASE_URL = "http://localhost:11434/v1"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+# API Key Retrieval
+# Priority 1: Google Colab Userdata (for native Colab environment)
+try:
+    from google.colab import userdata  # pyrefly: ignore
+
+    GOOGLE_API_KEY = userdata.get("GOOGLE_API_KEY")
+    OPENAI_API_KEY = userdata.get("OPENAI_API_KEY")
+    OPENROUTER_API_KEY = userdata.get("OPENROUTER_API_KEY")
+except (ImportError, AttributeError, Exception):
+    GOOGLE_API_KEY = None
+    OPENAI_API_KEY = None
+    OPENROUTER_API_KEY = None
+
+# Priority 2: Environment Variables (local development, .env files)
+if not GOOGLE_API_KEY:
+    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+if not OPENAI_API_KEY:
+    OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENROUTER_API_KEY:
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+
+# Priority 3: Interactive Prompt (VS Code Colab extension, fallback)
+if not GOOGLE_API_KEY:
+    try:
+        GOOGLE_API_KEY = getpass.getpass("GOOGLE_API_KEY: ")
+    except Exception:
+        print("Warning: GOOGLE_API_KEY not found and interactive prompt failed.")
+if not OPENAI_API_KEY:
+    try:
+        OPENAI_API_KEY = getpass.getpass("OPENAI_API_KEY: ")
+    except Exception:
+        print("Warning: OPENAI_API_KEY not found and interactive prompt failed.")
+if not OPENROUTER_API_KEY:
+    try:
+        OPENROUTER_API_KEY = getpass.getpass("OPENROUTER_API_KEY: ")
+    except Exception:
+        print("Warning: OPENROUTER_API_KEY not found and interactive prompt failed.")
 
 GPTModels = Literal[
     "gpt-4o-mini",
@@ -148,6 +184,7 @@ class LLMQuery:
         functions: Optional[List[Callable]] = None,
         image_model: str = "models/imagen-4.0-generate-001",
         tts_model: str = "gpt-4o-mini-tts",
+        transcription_model: str = "gemini-2.5-flash",
     ):
         """
         Initialize the LLMQuery instance.
@@ -161,11 +198,13 @@ class LLMQuery:
             tool_choice (Union[str, Dict], optional): Tool choice strategy. Defaults to None.
             functions (List[Callable], optional): List of functions to be available to the model. Defaults to None.
             image_model (str, optional): The image generation model to use. Defaults to "models/imagen-4.0-generate-001".
-            tts_model (str, optional): The TTS model to use. Defaults to "tts-1".
+            tts_model (str, optional): The TTS model to use. Defaults to "gpt-4o-mini-tts".
+            transcription_model (str, optional): The transcription model to use. Defaults to "gemini-2.5-flash".
         """
         self.model = model
         self.image_model = image_model
         self.tts_model = tts_model
+        self.transcription_model = transcription_model
         self.stream = stream
         self.json_format = json_format
         self.tools = tools
@@ -677,6 +716,101 @@ class LLMQuery:
             speed=speed,
         )
         return response.content
+
+    def transcribe_audio(
+        self,
+        audio_source: Union[bytes, str, io.IOBase],
+        model: Optional[str] = None,
+    ) -> str:
+        """
+        Transcribe audio from a file or bytes.
+
+        Args:
+            audio_source: The audio source. Can be a file path (str), audio bytes (bytes), or a file-like object.
+            model: Optional model to use, overriding the default instance transcription_model.
+
+        Returns:
+            str: The transcribed text.
+        """
+        target_model = model if model else self.transcription_model
+        client = self._get_client_for_model(target_model)
+
+        file_obj = None
+        should_close = False
+
+        # Determine strict or flexible usage based on model
+        is_gemini = "gemini" in target_model
+
+        try:
+            if is_gemini:
+                # Gemini via OpenAI compat usually requires chat completion with inline data
+                # because the audio/transcriptions endpoint might not be supported.
+                audio_bytes = None
+                mime_type = "audio/wav"  # Default
+
+                if isinstance(audio_source, str):
+                    mime_type_guess = mimetypes.guess_type(audio_source)[0]
+                    if mime_type_guess:
+                        mime_type = mime_type_guess
+                    with open(audio_source, "rb") as f:
+                        audio_bytes = f.read()
+                elif isinstance(audio_source, bytes):
+                    audio_bytes = audio_source
+                elif isinstance(audio_source, io.IOBase):
+                    audio_bytes = audio_source.read()
+                    if hasattr(audio_source, "name") and audio_source.name:
+                        mime_type_guess = mimetypes.guess_type(audio_source.name)[0]
+                        if mime_type_guess:
+                            mime_type = mime_type_guess
+                else:
+                    raise ValueError("Invalid audio_source type.")
+
+                b64_audio = base64.b64encode(audio_bytes).decode("utf-8")
+
+                response = client.chat.completions.create(
+                    model=target_model,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": "Transcribe the following audio.",
+                                },
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:{mime_type};base64,{b64_audio}"
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                )
+                return response.choices[0].message.content or ""
+
+            else:
+                # Standard OpenAI transcription endpoint
+                if isinstance(audio_source, str):
+                    file_obj = open(audio_source, "rb")
+                    should_close = True
+                elif isinstance(audio_source, bytes):
+                    file_obj = io.BytesIO(audio_source)
+                    file_obj.name = "audio.wav"
+                elif isinstance(audio_source, io.IOBase):
+                    file_obj = audio_source
+                else:
+                    raise ValueError("Invalid audio_source type.")
+
+                response = client.audio.transcriptions.create(  # pyrefly: ignore
+                    model=target_model,
+                    file=file_obj,
+                )
+                return response.text
+
+        finally:
+            if should_close and file_obj:
+                file_obj.close()
 
 
 if __name__ == "__main__":
