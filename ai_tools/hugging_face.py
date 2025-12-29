@@ -144,7 +144,7 @@ class HuggingFaceQuery:
                 self.model_name,
                 quantization_config=quant_config,
                 device_map="auto" if self.device == "cuda" else None,
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                dtype=torch.float16 if self.device == "cuda" else torch.float32,
             )
             if self.device == "cpu":
                 self._model.to("cpu")  # Explicitly move to cpu if not using device_map
@@ -224,7 +224,7 @@ class HuggingFaceQuery:
         self,
         user_prompt: str,
         system_prompt: Optional[str] = None,
-        max_new_tokens: int = 1000,
+        max_new_tokens: int = 10000,
         temperature: float = 0.7,
         do_sample: bool = True,
     ):
@@ -284,7 +284,7 @@ class HuggingFaceQuery:
                 task,
                 model=model,
                 device=self.device,
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                dtype=torch.float16 if self.device == "cuda" else torch.float32,
             )
 
         return self._pipelines[pipeline_key](**kwargs)
@@ -316,7 +316,7 @@ class HuggingFaceQuery:
             # Use AutoPipelineForText2Image for flexibility
             pipe = AutoPipelineForText2Image.from_pretrained(
                 target_model,
-                torch_dtype=torch.float16,
+                dtype=torch.float16,
                 variant="fp16",
                 use_safetensors=True,
             )
@@ -358,7 +358,7 @@ class HuggingFaceQuery:
                 "automatic-speech-recognition",
                 model=target_model,
                 device=self.device,
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+                dtype=torch.float16 if self.device == "cuda" else torch.float32,
             )
 
         # Handle bytes: pipelines typically accept filenames or numpy arrays.

@@ -1,0 +1,11 @@
+citizen_id,first_name,last_name,date_of_birth,gender,occupation,address.street,address.postal_code,address.city,address.state,address.country,contact_details.email,contact_details.mobile_phone,contact_details.landline,contact_details.fax
+DE-84920491X,Klaus,Müller,1978-04-12,Male,Automotive Engineer,Hauptstraße 45,10115,Berlin,Berlin,Germany,klaus.mueller78@gmx.de,+49 151 5550123,+49 30 12345678,
+DE-29384710Y,Sabine,Schmidt,1985-09-23,Female,Teacher,Goetheweg 12,20095,Hamburg,Hamburg,Germany,s.schmidt85@web.de,+49 170 9876543,+49 40 98765432,
+DE-99812344Z,Thomas,Weber,1965-11-30,Male,Architect,Leopoldstraße 201,80804,München,Bavaria,Germany,thomas.weber.arch@t-online.de,+49 160 1122334,+49 89 22334455,+49 89 22334456
+DE-44556677A,Julia,Hoffmann,1992-02-14,Female,Graphic Designer,Ehrenfeldgürtel 88,50823,Köln,North Rhine-Westphalia,Germany,j.hoffmann.design@gmail.com,+49 176 44556677,,
+DE-11223344B,Michael,Becker,1980-07-05,Male,Bank Clerk,Zeil 55,60313,Frankfurt am Main,Hesse,Germany,michael.becker@financemail.de,+49 172 9988776,+49 69 55667788,
+DE-77889900C,Stefanie,Wagner,1999-05-19,Female,Student,Königstraße 10,70173,Stuttgart,Baden-Württemberg,Germany,stefanie.w99@uni-stuttgart.de,+49 157 1239874,,
+DE-33445566D,Andreas,Koch,1972-08-22,Male,Small Business Owner,Königsallee 1,40212,Düsseldorf,North Rhine-Westphalia,Germany,info@koch-handel.de,+49 171 3344556,+49 211 3344556,+49 211 3344559
+DE-55667788E,Nadine,Richter,1988-12-01,Female,Nurse,Karl-Liebknecht-Straße 30,04107,Leipzig,Saxony,Germany,n.richter88@freenet.de,+49 174 5566778,+49 341 5566778,
+DE-99001122F,Peter,Schwarz,1955-03-15,Male,Retired,Westenhellweg 102,44137,Dortmund,North Rhine-Westphalia,Germany,peter.schwarz55@posteo.de,+49 162 9900112,+49 231 9900112,
+DE-22334455G,Monika,Klein,2001-06-30,Female,Apprentice,Rüttenscheider Stern 5,45130,Essen,North Rhine-Westphalia,Germany,m.klein2001@outlook.de,+49 159 2233445,,
