@@ -126,8 +126,31 @@ def pretty_print_json(data):
 
     except json.JSONDecodeError:
         print("Invalid JSON string provided.")
+
     except Exception as e:
         print(f"Error prettifying JSON: {e}")
+
+
+def clean_json(text: str) -> str:
+    """
+    Cleans a JSON string by removing Markdown code blocks and leading/trailing whitespace.
+
+    Args:
+        text (str): The input string containing JSON, potentially wrapped in Markdown.
+
+    Returns:
+        str: The cleaned JSON string.
+    """
+    cleaned_text = text.strip()
+    if cleaned_text.startswith("```json"):
+        cleaned_text = cleaned_text[len("```json") :]
+    elif cleaned_text.startswith("```"):
+        cleaned_text = cleaned_text[len("```") :]
+
+    if cleaned_text.endswith("```"):
+        cleaned_text = cleaned_text[: -len("```")]
+
+    return cleaned_text.strip()
 
 
 def handle_tool_call(
@@ -411,6 +434,10 @@ class LLMQuery:
         if message.tool_calls:
             self.tool_calls = [tc.model_dump() for tc in message.tool_calls]
 
+        # Clean JSON if requested
+        if json_format and content:
+            content = clean_json(content)
+
         # Update state
         self.response = content if content is not None else ""
         self._update_history(
@@ -521,6 +548,8 @@ class LLMQuery:
                                 )
 
             # Update state after stream finishes
+            if json_format and output:
+                output = clean_json(output)
             self.response = output
             if collected_tool_calls:
                 self.tool_calls = list(collected_tool_calls.values())
