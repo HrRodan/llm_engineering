@@ -93,9 +93,10 @@ GeminiModels = Literal[
 OpenRouterModels = Literal[
     "anthropic/claude-sonnet-4.5",
     "openai/gpt-oss-120b",
-    "deepseek/deepseek-v3.2",
+    "deepseek/deepseek-v3.2",  # top price / intelligence
     "x-ai/grok-4",
     "anthropic/claude-opus-4.5",
+    "x-ai/grok-4.1-fast",  # top price / intelligence
 ]
 
 ModelName = Union[GPTModels, OllamaModels, GeminiModels, OpenRouterModels]
