@@ -97,6 +97,8 @@ OpenRouterModels = Literal[
     "x-ai/grok-4",
     "anthropic/claude-opus-4.5",
     "x-ai/grok-4.1-fast",  # top price / intelligence
+    "z-ai/glm-4.7",
+    "moonshotai/kimi-k2-thinking"
 ]
 
 ModelName = Union[GPTModels, OllamaModels, GeminiModels, OpenRouterModels]
@@ -209,6 +211,7 @@ class LLMQuery:
         image_model: str = "models/imagen-4.0-generate-001",
         tts_model: str = "gpt-4o-mini-tts",
         transcription_model: str = "gemini-2.5-flash",
+        reasoning_effort: Optional[str] = None,
     ):
         """
         Initialize the LLMQuery instance.
@@ -224,11 +227,13 @@ class LLMQuery:
             image_model (str, optional): The image generation model to use. Defaults to "models/imagen-4.0-generate-001".
             tts_model (str, optional): The TTS model to use. Defaults to "gpt-4o-mini-tts".
             transcription_model (str, optional): The transcription model to use. Defaults to "gemini-2.5-flash".
+            reasoning_effort (str, optional): The reasoning effort to use. Defaults to None.
         """
         self.model = model
         self.image_model = image_model
         self.tts_model = tts_model
         self.transcription_model = transcription_model
+        self.reasoning_effort = reasoning_effort
         self.stream = stream
         self.json_format = json_format
         self.tools = tools
@@ -328,10 +333,11 @@ class LLMQuery:
         """
         Prepare the keyword arguments for the API call.
         """
-        target_model = model if model else self.model
+        # Resolve Overrides (Argument > Instance Variable > Default)
+        target_model = model if model is not None else self.model
         request_kwargs: Dict[str, Any] = {"model": target_model, "messages": messages}
 
-        # Tools handling
+        # Resolve Tools and Tool Choice
         target_tools = tools if tools is not None else self.tools
         target_tool_choice = (
             tool_choice if tool_choice is not None else self.tool_choice
@@ -407,23 +413,33 @@ class LLMQuery:
         Returns:
             The response text.
         """
-        # Resolve defaults
-        json_format = json_format if json_format is not None else self.json_format
-        target_model = model if model else self.model
-        client = self._get_client_for_model(target_model)
-
         # Reset tool calls
         self.tool_calls = []
+
+        # Resolve Overrides (Argument > Instance Variable)
+        target_json_format = (
+            json_format if json_format is not None else self.json_format
+        )
+        target_model = model if model is not None else self.model
+        target_reasoning_effort = (
+            reasoning_effort if reasoning_effort is not None else self.reasoning_effort
+        )
+        target_tools = tools if tools is not None else self.tools
+        target_tool_choice = (
+            tool_choice if tool_choice is not None else self.tool_choice
+        )
+
+        client = self._get_client_for_model(target_model)
 
         messages = self._prepare_messages(user_prompt, use_history)
         request_kwargs = self._prepare_request_kwargs(
             messages,
             stream=False,
-            json_format=json_format,
+            json_format=target_json_format,
             model=target_model,
-            reasoning_effort=reasoning_effort,
-            tools=tools,
-            tool_choice=tool_choice,
+            reasoning_effort=target_reasoning_effort,
+            tools=target_tools,
+            tool_choice=target_tool_choice,
             **kwargs,
         )
 
@@ -436,7 +452,7 @@ class LLMQuery:
             self.tool_calls = [tc.model_dump() for tc in message.tool_calls]
 
         # Clean JSON if requested
-        if json_format and content:
+        if target_json_format and content:
             content = clean_json(content)
 
         # Update state
@@ -483,23 +499,33 @@ class LLMQuery:
         Returns:
             The full response string (if return_generator=False).
         """
-        # Resolve defaults
-        json_format = json_format if json_format is not None else self.json_format
-        target_model = model if model else self.model
-        client = self._get_client_for_model(target_model)
-
         # Reset tool calls
         self.tool_calls = []
+
+        # Resolve Overrides (Argument > Instance Variable)
+        target_json_format = (
+            json_format if json_format is not None else self.json_format
+        )
+        target_model = model if model is not None else self.model
+        target_reasoning_effort = (
+            reasoning_effort if reasoning_effort is not None else self.reasoning_effort
+        )
+        target_tools = tools if tools is not None else self.tools
+        target_tool_choice = (
+            tool_choice if tool_choice is not None else self.tool_choice
+        )
+
+        client = self._get_client_for_model(target_model)
 
         messages = self._prepare_messages(user_prompt, use_history)
         request_kwargs = self._prepare_request_kwargs(
             messages,
             stream=True,
-            json_format=json_format,
+            json_format=target_json_format,
             model=target_model,
-            reasoning_effort=reasoning_effort,
-            tools=tools,
-            tool_choice=tool_choice,
+            reasoning_effort=target_reasoning_effort,
+            tools=target_tools,
+            tool_choice=target_tool_choice,
             **kwargs,
         )
 
@@ -549,7 +575,7 @@ class LLMQuery:
                                 )
 
             # Update state after stream finishes
-            if json_format and output:
+            if target_json_format and output:
                 output = clean_json(output)
             self.response = output
             if collected_tool_calls:
@@ -702,7 +728,8 @@ class LLMQuery:
         Returns:
             Image.Image: The generated image as a PIL Image object.
         """
-        target_model = model if model else self.image_model
+        # Resolve Overrides (Argument > Instance Variable)
+        target_model = model if model is not None else self.image_model
         client = self._get_client_for_model(target_model)
         response = client.images.generate(  # pyrefly: ignore
             model=target_model,
@@ -737,7 +764,8 @@ class LLMQuery:
         Returns:
             bytes: The generated audio content.
         """
-        target_model = model if model else self.tts_model
+        # Resolve Overrides (Argument > Instance Variable)
+        target_model = model if model is not None else self.tts_model
         client = self._get_client_for_model(target_model)
         response = client.audio.speech.create(
             model=target_model,
@@ -762,7 +790,8 @@ class LLMQuery:
         Returns:
             str: The transcribed text.
         """
-        target_model = model if model else self.transcription_model
+        # Resolve Overrides (Argument > Instance Variable)
+        target_model = model if model is not None else self.transcription_model
         client = self._get_client_for_model(target_model)
 
         file_obj = None
