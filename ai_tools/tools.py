@@ -4,6 +4,8 @@ import base64
 import io
 import mimetypes
 import getpass
+import re
+import uuid
 from PIL import Image
 from typing import (
     Dict,
@@ -93,12 +95,13 @@ GeminiModels = Literal[
 OpenRouterModels = Literal[
     "anthropic/claude-sonnet-4.5",
     "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
     "deepseek/deepseek-v3.2",  # top price / intelligence
     "x-ai/grok-4",
     "anthropic/claude-opus-4.5",
     "x-ai/grok-4.1-fast",  # top price / intelligence
     "z-ai/glm-4.7",
-    "moonshotai/kimi-k2-thinking"
+    "moonshotai/kimi-k2-thinking",
 ]
 
 ModelName = Union[GPTModels, OllamaModels, GeminiModels, OpenRouterModels]
@@ -164,6 +167,7 @@ def handle_tool_call(
 
     Iterates over a list of tool calls, looks up the function in the provided list,
     executes it with the provided arguments, and collects the results.
+    Captures errors during parsing or execution and returns them as tool outputs.
 
     Args:
         tool_calls (List[Dict]): A list of tool call dictionaries from the LLM response.
@@ -177,23 +181,47 @@ def handle_tool_call(
     function_map = {f.__name__: f for f in functions}
 
     for tool_call in tool_calls:
-        # Extract the function name and parse arguments from the tool call
-        function_name = tool_call["function"]["name"]
-        arguments = json.loads(tool_call["function"]["arguments"])
+        tool_id = tool_call.get("id", "unknown_id")
+        function_name = tool_call.get("function", {}).get("name", "unknown_function")
+        arguments_str = tool_call.get("function", {}).get("arguments", "")
+        arguments = {}
 
-        if function_name in function_map:
+        try:
+            # Parse arguments
+            if arguments_str:
+                if isinstance(arguments_str, dict):
+                    arguments = arguments_str
+                else:
+                    try:
+                        arguments = json.loads(arguments_str)
+                    except json.JSONDecodeError as e:
+                        raise ValueError(f"Failed to parse arguments JSON: {e}")
+
+            # Check if function exists
+            if function_name not in function_map:
+                raise ValueError(
+                    f"Function '{function_name}' not found. Available functions: {list(function_map.keys())}"
+                )
+
+            # Execute function
             function_to_call = function_map[function_name]
-            result = function_to_call(**arguments)
-            tool_response.append(
-                {
-                    "tool_call_id": tool_call["id"],
-                    "output": result,
-                    "arguments": arguments,
-                    "name": function_name,
-                }
-            )
-        else:
-            print(f"Warning: Function {function_name} not found in provided functions")
+            try:
+                result = function_to_call(**arguments)
+            except Exception as e:
+                # Catch execution errors and return them as tool output so the LLM knows it failed
+                raise RuntimeError(f"Error while executing '{function_name}': {e}")
+
+        except Exception as e:
+            result = f"Error: {str(e)}"
+
+        tool_response.append(
+            {
+                "tool_call_id": tool_id,
+                "output": result,
+                "arguments": arguments,
+                "name": function_name,
+            }
+        )
 
     return tool_response
 
@@ -246,6 +274,59 @@ class LLMQuery:
         self.chat_history: List[Dict[str, Any]] = []
         self.tool_calls: List[Dict] = []
         self.response = ""
+
+    def _parse_xml_tool_calls(self, content: str) -> List[Dict[str, Any]]:
+        """
+        Parse XML-formatted tool calls from the message content.
+        Looks for <function_calls>...</function_calls> blocks and nested <invoke name="...">...</invoke> tags.
+        """
+        tool_calls = []
+
+        # Regex to find the <function_calls> block
+        function_calls_match = re.search(
+            r"<function_calls>(.*?)</function_calls>", content, re.DOTALL
+        )
+
+        if function_calls_match:
+            function_calls_content = function_calls_match.group(1)
+
+            # Regex to find individual <invoke> tags with loose name attribute matching
+            # Logic: Match <invoke followed by anything > (content) </invoke>
+            invoke_matches = re.finditer(
+                r"<invoke(.*?)>(.*?)</invoke>",
+                function_calls_content,
+                re.DOTALL,
+            )
+
+            for match in invoke_matches:
+                attrs = match.group(1).strip()
+                arguments_str = match.group(2).strip()
+
+                # Extract name from attributes, supporting single or double quotes
+                name_match = re.search(r'name=["\']([^"\']+)["\']', attrs)
+                if name_match:
+                    function_name = name_match.group(1)
+                else:
+                    # Fallback for missing name to trigger a specific error in handle_tool_call
+                    function_name = "error_missing_function_name"
+
+                # Check for CDATA wrapper and remove it if present
+                if arguments_str.startswith("<![CDATA[") and arguments_str.endswith(
+                    "]]>"
+                ):
+                    arguments_str = arguments_str[9:-3].strip()
+
+                tool_id = f"call_via_content_{uuid.uuid4().hex[:8]}"
+
+                tool_calls.append(
+                    {
+                        "id": tool_id,
+                        "type": "function",
+                        "function": {"name": function_name, "arguments": arguments_str},
+                    }
+                )
+
+        return tool_calls
 
     def _get_client_for_model(self, model: str) -> OpenAI:
         """
@@ -365,6 +446,7 @@ class LLMQuery:
         user_prompt: Union[str, List[Dict[str, str]], None],
         response_content: Optional[str],
         tool_calls: Optional[List[Dict]] = None,
+        thought_signature: Optional[str] = None,
     ):
         """
         Update the chat history with the user prompt, assistant response and results from tool calls.
@@ -381,6 +463,9 @@ class LLMQuery:
         }
         if tool_calls:
             assistant_msg["tool_calls"] = tool_calls
+        if thought_signature:
+            # Store appropriately, mimicking the API structure or just as a clear field
+            assistant_msg["thought_signature"] = thought_signature
 
         self.chat_history.append(assistant_msg)
 
@@ -451,14 +536,49 @@ class LLMQuery:
         if message.tool_calls:
             self.tool_calls = [tc.model_dump() for tc in message.tool_calls]
 
+        # Also check for XML-formatted tool calls in the content
+        if content:
+            xml_tool_calls = self._parse_xml_tool_calls(content)
+            if xml_tool_calls:
+                self.tool_calls.extend(xml_tool_calls)
+
         # Clean JSON if requested
         if target_json_format and content:
             content = clean_json(content)
 
+        # Look for thought_signature in the message object for GEMINI models
+        # Based on docs: extra_content.google.thought_signature
+        # Also checking model_extra as a fallback/alternative location for extra fields
+        thought_signature = None
+
+        # Check standard Pydantic model_extra/extra_fields if available
+        # Note: model_extra might contain 'extra_content' dict inside it
+        extra_fields = getattr(message, "model_extra", None) or getattr(
+            message, "extra_content", None
+        )
+
+        if extra_fields:
+            # Handle case where extra_content is nested inside model_extra
+            if "extra_content" in extra_fields and isinstance(
+                extra_fields["extra_content"], dict
+            ):
+                extra_content = extra_fields["extra_content"]
+            else:
+                extra_content = extra_fields
+
+            # Navigate key path: google -> thought_signature
+            if isinstance(extra_content, dict):
+                google_info = extra_content.get("google")
+                if isinstance(google_info, dict):
+                    thought_signature = google_info.get("thought_signature")
+
         # Update state
         self.response = content if content is not None else ""
         self._update_history(
-            user_prompt, content, self.tool_calls if self.tool_calls else None
+            user_prompt,
+            content,
+            self.tool_calls if self.tool_calls else None,
+            thought_signature=thought_signature,
         )
 
         if display_output:
@@ -581,10 +701,18 @@ class LLMQuery:
             if collected_tool_calls:
                 self.tool_calls = list(collected_tool_calls.values())
 
+            # Also check for XML-formatted tool calls in the full content
+            if output:
+                xml_tool_calls = self._parse_xml_tool_calls(output)
+                if xml_tool_calls:
+                    self.tool_calls.extend(xml_tool_calls)
+
             self._update_history(
                 user_prompt,
                 output if output else None,
                 self.tool_calls if self.tool_calls else None,
+                # Stream extraction of thought_signature is skipped for now as it usually appears at the very end
+                # and might require more complex chunk accumulation logic.
             )
 
         gen = stream_generator()
@@ -680,7 +808,7 @@ class LLMQuery:
 
     def get_tool_responses(
         self,
-        max_iterations: int = 10,
+        max_iterations: int = 50,
     ) -> str:
         """
         Execute pending tool calls and continue the conversation until no more tool calls are made.
@@ -695,9 +823,16 @@ class LLMQuery:
         iterations = 0
 
         while self.tool_calls and iterations < max_iterations:
+            print(self.tool_calls)
             tool_response = handle_tool_call(self.tool_calls, functions=self.functions)
             self.append_tool_result(tool_response)
             query_response = self.query(tools=self.tools)
+
+            if not query_response and not self.tool_calls:
+                # Retry strategy: If LLM returns empty string after tools ran, prompt it again
+                if self.chat_history and self.chat_history[-1]["role"] == "assistant":
+                    self.chat_history.pop()
+                query_response = self.query(tools=self.tools)
 
             if query_response:
                 if response:

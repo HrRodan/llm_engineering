@@ -160,21 +160,45 @@ class PokemonAPIClient:
             height_m = data["height"] / 10
             # Convert hectograms to kg
             weight_kg = data["weight"] / 10
+
+            # Expanded abilities with is_hidden flag
             abilities = [
-                a["ability"]["name"] for a in data["abilities"] if not a["is_hidden"]
+                {
+                    "name": a["ability"]["name"],
+                    "is_hidden": a["is_hidden"],
+                    "slot": a["slot"],
+                }
+                for a in data["abilities"]
             ]
 
+            # Moves
+            moves = [m["move"]["name"] for m in data["moves"]]
+
+            # Forms
+            forms = [f["name"] for f in data["forms"]]
+
+            # Held items
+            held_items = [h["item"]["name"] for h in data.get("held_items", [])]
+
             return {
+                "id": data["id"],
                 "name": data["name"],
                 "stats": stats,
                 "types": types,
                 "height_m": height_m,
                 "weight_kg": weight_kg,
                 "abilities": abilities,
+                "forms": forms,
+                "moves": moves,
+                "held_items": held_items,
                 "base_experience": data.get("base_experience"),
+                "is_default": data.get("is_default"),
+                "order": data.get("order"),
+                "species": data.get("species", {}).get("name"),
                 "sprites": {
                     "front_default": data["sprites"].get("front_default"),
                     "back_default": data["sprites"].get("back_default"),
+                    "front_shiny": data["sprites"].get("front_shiny"),
                 },
             }
         except requests.exceptions.RequestException:
@@ -578,21 +602,7 @@ Du bist **Professor Eich (Professor Oak)**, der renommierte Pokémon-Forscher au
 * Du antwortest **immer auf Deutsch**, egal in welcher Sprache die API-Daten vorliegen.
 
 ## 2. Deine Werkzeuge (The Tools)
-Du hast Zugriff auf externe Python-Funktionen, um Live-Daten abzurufen. Rate **niemals** Stats, Werte oder andere Details – **nutze immer die Tools.** Die Tools sind von entscheidender Bedeutung für korrekte Antworten.
-
-* `get_pokemon_details`: Für Kampfwerte, Sprites, Base Exp.
-* `get_species_info`: Für Entwicklungs-URL, Genus, Generation, Fangraten, Lore.
-* `get_evolution_chain`: Für präzise Entwicklungs-Bedingungen (Level, Item, etc.).
-* `get_evolution_trigger_info`: Für Infos zu Tausch/Level-up Auslösern.
-* `get_move_details`: Für Details zu Attacken (Stärke, Prio, Ziel).
-* `get_encounters`: Um Fundorte in der Wildnis zu finden.
-* `get_nature_info`: Um Wesen (Natures) und deren Stat-Bonus/Malus zu erklären.
-* `get_type_info`: Um Schwächen und Stärken (Matchups) zu finden.
-* `get_pokemon_list_by_type`: Um Beispiele für einen bestimmten Typ zu finden.
-* `get_ability_details`: Um komplexe Fähigkeiten zu erklären.
-* `get_item_info`: Für Item-Details (Attribute, Fling, usw.)
-* `get_item_category_info`: Wenn nach Kategorien von Items gefragt wird (z.B. Pokébälle).
-* `get_item_attribute_info`: Wenn nach Item-Eigenschaften gefragt wird (z.B. consumable).
+Du hast Zugriff auf externe Python-Funktionen (Tools), um Live-Daten abzurufen. Rate **niemals** Stats, Werte oder andere Details – **nutze immer die Tools.** Die Tools sind von entscheidender Bedeutung für korrekte Antworten.
 
 ## 3. Der Übersetzungs-Prozess (Kritisch!)
 Die API versteht nur **Englisch**. Der Nutzer spricht **Deutsch**. Du bist der Dolmetscher.
@@ -641,7 +651,8 @@ TOOLS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_pokemon_details",
-            "description": "Ruft technische Daten für ein Pokémon ab: Basiswerte (Angriff, Init), Typen, Größe, Gewicht und Fähigkeiten. Nutze dies für allgemeine Stats-Fragen.",
+            "description": "Ruft umfangreiche technische Daten für ein Pokémon ab: Basiswerte, Typen, Größe, Gewicht, Fähigkeiten (inkl. versteckte), Attacken (Moves), Formen und Held Items. Nutze dies für allgemeine Stats-Fragen.",
+            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -651,6 +662,7 @@ TOOLS: List[Dict[str, Any]] = [
                     }
                 },
                 "required": ["name"],
+                "additionalProperties": False,
             },
         },
     },
@@ -659,6 +671,7 @@ TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_species_info",
             "description": "Ruft Hintergrundinformationen ab: Pokédex-Einträge, Fangrate, ob es legendär ist, und die 'evolution_chain_url'. Nutze dies für Fragen zur Entwicklung oder zum Verhalten.",
+            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -668,6 +681,7 @@ TOOLS: List[Dict[str, Any]] = [
                     }
                 },
                 "required": ["name"],
+                "additionalProperties": False,
             },
         },
     },
@@ -676,6 +690,7 @@ TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_evolution_chain",
             "description": "Ruft den kompletten Entwicklungsbaum ab. Benötigt eine 'chain_id' (Integer), die man vorher über 'get_species_info' herausfindet.",
+            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -685,6 +700,7 @@ TOOLS: List[Dict[str, Any]] = [
                     }
                 },
                 "required": ["chain_id"],
+                "additionalProperties": False,
             },
         },
     },
@@ -693,6 +709,7 @@ TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_move_details",
             "description": "Ruft Daten zu einer Attacke ab: Stärke, Genauigkeit, AP und Schadensklasse (physisch/spezial).",
+            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -702,6 +719,7 @@ TOOLS: List[Dict[str, Any]] = [
                     }
                 },
                 "required": ["name"],
+                "additionalProperties": False,
             },
         },
     },
@@ -710,6 +728,7 @@ TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_type_info",
             "description": "Ruft Typen-Effektivität ab. Gibt Listen zurück, wogegen dieser Typ schwach oder stark ist.",
+            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -719,6 +738,7 @@ TOOLS: List[Dict[str, Any]] = [
                     }
                 },
                 "required": ["name"],
+                "additionalProperties": False,
             },
         },
     },
@@ -727,6 +747,7 @@ TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_encounters",
             "description": "Findet Orte (Routen, Höhlen, Gebiete), an denen man ein bestimmtes Pokémon wild fangen kann.",
+            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -736,6 +757,7 @@ TOOLS: List[Dict[str, Any]] = [
                     }
                 },
                 "required": ["name"],
+                "additionalProperties": False,
             },
         },
     },
@@ -744,6 +766,7 @@ TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_nature_info",
             "description": "Ruft Details zu einem Wesen (Nature) ab. Zeigt, welcher Statuswert erhöht und welcher gesenkt wird. Wichtig für strategische Fragen.",
+            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -753,6 +776,7 @@ TOOLS: List[Dict[str, Any]] = [
                     }
                 },
                 "required": ["name"],
+                "additionalProperties": False,
             },
         },
     },
@@ -761,6 +785,7 @@ TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_pokemon_list_by_type",
             "description": "Gibt eine Liste von Pokémon zurück, die einen bestimmten Elementar-Typ haben. Nutze dies, wenn der Nutzer nach Beispielen für einen Typ fragt.",
+            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -773,7 +798,8 @@ TOOLS: List[Dict[str, Any]] = [
                         "description": "Wie viele Beispiele zurückgegeben werden sollen (Standard: 10).",
                     },
                 },
-                "required": ["type_name"],
+                "required": ["type_name", "limit"],
+                "additionalProperties": False,
             },
         },
     },
@@ -782,6 +808,7 @@ TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_ability_details",
             "description": "Erklärt genau, was eine passive Fähigkeit (Ability) im Kampf bewirkt und welche Pokémon sie haben können.",
+            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -791,6 +818,7 @@ TOOLS: List[Dict[str, Any]] = [
                     }
                 },
                 "required": ["name"],
+                "additionalProperties": False,
             },
         },
     },
@@ -799,6 +827,7 @@ TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_item_info",
             "description": "Ruft Details zu einem Item ab (Kosten, Effekt, Attribute, Fling-Power).",
+            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -808,6 +837,7 @@ TOOLS: List[Dict[str, Any]] = [
                     }
                 },
                 "required": ["name"],
+                "additionalProperties": False,
             },
         },
     },
@@ -816,6 +846,7 @@ TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_evolution_trigger_info",
             "description": "Gibt Infos zurück, welche Pokémon durch einen bestimmten Auslöser entwickelt werden (z.B. 'trade').",
+            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -825,6 +856,7 @@ TOOLS: List[Dict[str, Any]] = [
                     }
                 },
                 "required": ["name"],
+                "additionalProperties": False,
             },
         },
     },
@@ -833,6 +865,7 @@ TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_item_category_info",
             "description": "Listet Items in einer bestimmten Kategorie auf (z.B. 'standard-balls', 'healing').",
+            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -842,6 +875,7 @@ TOOLS: List[Dict[str, Any]] = [
                     }
                 },
                 "required": ["name"],
+                "additionalProperties": False,
             },
         },
     },
@@ -850,6 +884,7 @@ TOOLS: List[Dict[str, Any]] = [
         "function": {
             "name": "get_item_attribute_info",
             "description": "Listet Items mit einem bestimmten Attribut auf (z.B. 'consumable', 'holdable').",
+            "strict": True,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -859,6 +894,7 @@ TOOLS: List[Dict[str, Any]] = [
                     }
                 },
                 "required": ["name"],
+                "additionalProperties": False,
             },
         },
     },
