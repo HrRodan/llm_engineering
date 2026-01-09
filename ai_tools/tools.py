@@ -104,6 +104,7 @@ OpenRouterModels = Literal[
     "x-ai/grok-4.1-fast",  # top price / intelligence
     "z-ai/glm-4.7",
     "moonshotai/kimi-k2-thinking",
+    "qwen/qwen3-embedding-8b",  # Embedding model
 ]
 
 ModelName = Union[GPTModels, OllamaModels, GeminiModels, OpenRouterModels]
@@ -241,6 +242,7 @@ class LLMQuery:
         image_model: str = "models/imagen-4.0-generate-001",
         tts_model: str = "gpt-4o-mini-tts",
         transcription_model: str = "gemini-2.5-flash",
+        embedding_model: str = "qwen/qwen3-embedding-8b",
         reasoning_effort: Optional[str] = None,
         history_limit: Optional[int] = None,
         response_format: Union[Dict[str, Any], Type[BaseModel], None] = None,
@@ -259,6 +261,8 @@ class LLMQuery:
             image_model (str, optional): The image generation model to use. Defaults to "models/imagen-4.0-generate-001".
             tts_model (str, optional): The TTS model to use. Defaults to "gpt-4o-mini-tts".
             transcription_model (str, optional): The transcription model to use. Defaults to "gemini-2.5-flash".
+            embedding_model (str, optional): The embedding model to use. Defaults to "qwen/qwen3-embedding-8b".
+            reasoning_effort (str, optional): The reasoning effort to use. Defaults to None.
             reasoning_effort (str, optional): The reasoning effort to use. Defaults to None.
             reasoning_effort (str, optional): The reasoning effort to use. Defaults to None.
             history_limit (int, optional): The maximum number of history entries to include. Defaults to None (all history).
@@ -268,6 +272,7 @@ class LLMQuery:
         self.image_model = image_model
         self.tts_model = tts_model
         self.transcription_model = transcription_model
+        self.embedding_model = embedding_model
         self.reasoning_effort = reasoning_effort
         self.history_limit = history_limit
         self.stream = stream
@@ -1107,6 +1112,30 @@ class LLMQuery:
         finally:
             if should_close and file_obj:
                 file_obj.close()
+
+    def generate_embedding(
+        self,
+        text: str,
+        model: Optional[str] = None,
+    ) -> List[float]:
+        """
+        Generate an embedding for the text using the specified model.
+
+        Args:
+            text: The text to generate an embedding for.
+            model: Optional model to use, overriding the default instance embedding_model.
+
+        Returns:
+            List[float]: The embedding vector.
+        """
+        target_model = model if model is not None else self.embedding_model
+        client = self._get_client_for_model(target_model)
+
+        response = client.embeddings.create(
+            model=target_model,
+            input=text,
+        )
+        return response.data[0].embedding
 
 
 if __name__ == "__main__":
