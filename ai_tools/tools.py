@@ -468,6 +468,20 @@ class LLMQuery:
         # Include any additional kwargs
         request_kwargs.update(kwargs)
 
+        # OpenRouter specific configuration
+        if target_model in MODEL_DICT["openrouter"]:
+            extra_body = request_kwargs.get("extra_body", {})
+            if "provider" not in extra_body:
+                extra_body["provider"] = {}
+
+            # Ensure OpenRouter specific parameters are set
+            # require_parameters: True -> ensures 400 error if parameters are missing
+            # data_collection: "deny" -> opts out of data collection
+            extra_body["provider"].setdefault("require_parameters", True)
+            extra_body["provider"].setdefault("data_collection", "deny")
+
+            request_kwargs["extra_body"] = extra_body
+
         return request_kwargs
 
     def _update_history(
