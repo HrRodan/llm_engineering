@@ -24,32 +24,35 @@ class TestEmbeddingStructure(unittest.TestCase):
 
     @patch("ai_tools.tools.LLMQuery._get_client_for_model")
     def test_generate_embedding_call(self, mock_get_client):
-        """Test that generate_embedding calls the client correctly."""
+        """Test that generate_embedding calls the client correctly with a list of strings."""
         # Setup mock
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
 
         # Mock response structure
         mock_response = MagicMock()
-        mock_data = MagicMock()
-        mock_data.embedding = [0.1, 0.2, 0.3]
-        mock_response.data = [mock_data]
+        mock_data1 = MagicMock()
+        mock_data1.embedding = [0.1, 0.2, 0.3]
+        mock_data2 = MagicMock()
+        mock_data2.embedding = [0.4, 0.5, 0.6]
+
+        mock_response.data = [mock_data1, mock_data2]
         mock_client.embeddings.create.return_value = mock_response
 
         llm = LLMQuery()
-        text = "test text"
-        result = llm.generate_embedding(text)
+        texts = ["text1", "text2"]
+        result = llm.generate_embedding(texts)
 
         # Verify client calls
         mock_get_client.assert_called_with("qwen/qwen3-embedding-8b")
         mock_client.embeddings.create.assert_called_with(
-            model="qwen/qwen3-embedding-8b", input=text
+            model="qwen/qwen3-embedding-8b", input=texts
         )
-        self.assertEqual(result, [0.1, 0.2, 0.3])
+        self.assertEqual(result, [[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
 
     @patch("ai_tools.tools.LLMQuery._get_client_for_model")
     def test_generate_embedding_custom_model(self, mock_get_client):
-        """Test generating embedding with a custom model."""
+        """Test generating embedding with a custom model and list input."""
         mock_client = MagicMock()
         mock_get_client.return_value = mock_client
 
@@ -61,12 +64,14 @@ class TestEmbeddingStructure(unittest.TestCase):
 
         llm = LLMQuery()
         custom_model = "custom_model"
-        result = llm.generate_embedding("text", model=custom_model)
+        texts = ["text"]
+        result = llm.generate_embedding(texts, model=custom_model)
 
         mock_get_client.assert_called_with(custom_model)
         mock_client.embeddings.create.assert_called_with(
-            model=custom_model, input="text"
+            model=custom_model, input=texts
         )
+        self.assertEqual(result, [[0.9, 0.8]])
 
 
 if __name__ == "__main__":
