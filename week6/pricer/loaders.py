@@ -8,7 +8,7 @@ import os
 CHUNK_SIZE = 1000
 
 cpu_count = os.cpu_count()
-WORKERS = max(cpu_count - 1, 1)
+WORKERS = cpu_count if cpu_count is not None else 1
 
 
 class ItemLoader:
@@ -46,7 +46,9 @@ class ItemLoader:
         results = []
         chunk_count = (len(self.dataset) // CHUNK_SIZE) + 1
         with ProcessPoolExecutor(max_workers=workers) as pool:
-            for batch in tqdm(pool.map(self.from_chunk, self.chunk_generator()), total=chunk_count):
+            for batch in tqdm(
+                pool.map(self.from_chunk, self.chunk_generator()), total=chunk_count
+            ):
                 results.extend(batch)
         return results
 
