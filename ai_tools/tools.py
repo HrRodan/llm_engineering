@@ -6,6 +6,7 @@ import mimetypes
 import getpass
 import re
 import uuid
+from tenacity import retry, stop_after_attempt, wait_exponential
 from PIL import Image
 from typing import (
     Dict,
@@ -92,18 +93,23 @@ GeminiModels = Literal[
     "gemini-flash-lite-latest",
     "models/imagen-4.0-generate-001",
     "gemini-2.5-pro-preview-tts",
+    "gemini-3-flash-preview",
 ]
 
 OpenRouterModels = Literal[
-    "anthropic/claude-sonnet-4.5",
+    # "anthropic/claude-sonnet-4.5",
     "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
     "deepseek/deepseek-v3.2",  # top price / intelligence
-    "x-ai/grok-4",
-    "anthropic/claude-opus-4.5",
+    "deepseek/deepseek-r1",  # reasoning model
+    # "x-ai/grok-4",
+    # "anthropic/claude-opus-4.5",
     "x-ai/grok-4.1-fast",  # top price / intelligence
     "z-ai/glm-4.7",
     "moonshotai/kimi-k2-thinking",
+    "xiaomi/mimo-v2-flash:free",  # free model
+    "qwen/qwen3-embedding-8b",  # Embedding model
+    "nvidia/nemotron-3-nano-30b-a3b",
 ]
 
 ModelName = Union[GPTModels, OllamaModels, GeminiModels, OpenRouterModels]
@@ -241,6 +247,7 @@ class LLMQuery:
         image_model: str = "models/imagen-4.0-generate-001",
         tts_model: str = "gpt-4o-mini-tts",
         transcription_model: str = "gemini-2.5-flash",
+        embedding_model: str = "qwen/qwen3-embedding-8b",
         reasoning_effort: Optional[str] = None,
         history_limit: Optional[int] = None,
         response_format: Union[Dict[str, Any], Type[BaseModel], None] = None,
@@ -259,7 +266,7 @@ class LLMQuery:
             image_model (str, optional): The image generation model to use. Defaults to "models/imagen-4.0-generate-001".
             tts_model (str, optional): The TTS model to use. Defaults to "gpt-4o-mini-tts".
             transcription_model (str, optional): The transcription model to use. Defaults to "gemini-2.5-flash".
-            reasoning_effort (str, optional): The reasoning effort to use. Defaults to None.
+            embedding_model (str, optional): The embedding model to use. Defaults to "qwen/qwen3-embedding-8b".
             reasoning_effort (str, optional): The reasoning effort to use. Defaults to None.
             history_limit (int, optional): The maximum number of history entries to include. Defaults to None (all history).
             response_format (Union[Dict[str, Any], Type[BaseModel], None], optional): The format of the response. Can be a dict or a Pydantic model. Defaults to None.
@@ -268,6 +275,7 @@ class LLMQuery:
         self.image_model = image_model
         self.tts_model = tts_model
         self.transcription_model = transcription_model
+        self.embedding_model = embedding_model
         self.reasoning_effort = reasoning_effort
         self.history_limit = history_limit
         self.stream = stream
@@ -283,6 +291,41 @@ class LLMQuery:
         self.chat_history: List[Dict[str, Any]] = []
         self.tool_calls: List[Dict] = []
         self.response = ""
+        self.reasoning_history: List[Optional[str]] = []
+        self.total_cost: float = 0.0
+        self.total_prompt_tokens: int = 0
+        self.total_completion_tokens: int = 0
+        self.total_reasoning_tokens: int = 0
+        self.total_tokens: int = 0
+
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    )
+    def _create_chat_completion(self, client, **kwargs):
+        """
+        Helper method to execute the chat completion with retries.
+        """
+        response = client.chat.completions.create(**kwargs)
+        if not response or not response.choices:
+            print(f"Invalid response structure: response={response}, retrying")
+            raise ValueError(f"Invalid response structure: response={response}")
+
+        message = response.choices[0].message
+        if message is None:
+            print(f"Message is None response={response}, retrying")
+            raise ValueError(f"Message is None response={response}")
+
+        if not message.content and not message.tool_calls:
+            print(
+                f"Response content is empty and no tool calls found response={response}, retrying"
+            )
+            raise ValueError(
+                f"Response content is empty and no tool calls found response={response}"
+            )
+
+        return response
 
     def _parse_xml_tool_calls(self, content: str) -> List[Dict[str, Any]]:
         """
@@ -336,6 +379,16 @@ class LLMQuery:
                 )
 
         return tool_calls
+
+    def _sanitize_tool_id(self, tool_id: Optional[str]) -> str:
+        """
+        Sanitize a tool call ID to be alphanumeric + underscore, or generate one.
+        """
+        if not tool_id:
+            return f"call_{uuid.uuid4().hex[:8]}"
+
+        # Replace invalid chars (only allow a-zA-Z0-9_-)
+        return re.sub(r"[^a-zA-Z0-9_-]", "_", tool_id)
 
     def _get_client_for_model(self, model: str) -> OpenAI:
         """
@@ -480,6 +533,10 @@ class LLMQuery:
             extra_body["provider"].setdefault("require_parameters", True)
             extra_body["provider"].setdefault("data_collection", "deny")
 
+            # Enable usage tracking
+            if self.model in MODEL_DICT["openrouter"]:
+                extra_body["usage"] = {"include": True}
+
             request_kwargs["extra_body"] = extra_body
 
         return request_kwargs
@@ -579,7 +636,32 @@ class LLMQuery:
             **kwargs,
         )
 
-        response = client.chat.completions.create(**request_kwargs)
+        response = self._create_chat_completion(client, **request_kwargs)
+
+        if hasattr(response, "usage") and response.usage:
+            self.total_prompt_tokens += response.usage.prompt_tokens
+            self.total_completion_tokens += response.usage.completion_tokens
+            self.total_tokens += response.usage.total_tokens
+
+            # Extract cost from OpenRouter extra fields
+            # Check model_extra for 'cost' or similar if provided by the client's Pydantic model
+            if hasattr(response.usage, "model_extra") and response.usage.model_extra:
+                self.total_cost += response.usage.model_extra.get("cost", 0.0)
+            elif isinstance(response.usage, dict):
+                self.total_cost += response.usage.get("cost", 0.0)
+
+            # Extract reasoning tokens if available
+            if (
+                hasattr(response.usage, "completion_tokens_details")
+                and response.usage.completion_tokens_details
+            ):
+                # Check if it's a dict or object (Pydantic model)
+                details = response.usage.completion_tokens_details
+                if isinstance(details, dict):
+                    self.total_reasoning_tokens += details.get("reasoning_tokens", 0)
+                elif hasattr(details, "reasoning_tokens"):
+                    self.total_reasoning_tokens += details.reasoning_tokens
+
         message = response.choices[0].message
         content = message.content
 
@@ -593,6 +675,15 @@ class LLMQuery:
             if xml_tool_calls:
                 self.tool_calls.extend(xml_tool_calls)
 
+        # Sanitize tool calls (on write to history)
+        for tc in self.tool_calls:
+            tc["id"] = self._sanitize_tool_id(tc.get("id"))
+            # Ensure function name is a valid string
+            if not tc.get("function"):
+                tc["function"] = {"name": "unknown_function", "arguments": "{}"}
+            elif not tc["function"].get("name"):
+                tc["function"]["name"] = "unknown_function"
+
         # Clean JSON if requested
         if target_json_format and content:
             content = clean_json(content)
@@ -601,12 +692,18 @@ class LLMQuery:
         # Based on docs: extra_content.google.thought_signature
         # Also checking model_extra as a fallback/alternative location for extra fields
         thought_signature = None
+        # Initialize current reasoning to None
+        current_reasoning = None
 
         # Check standard Pydantic model_extra/extra_fields if available
         # Note: model_extra might contain 'extra_content' dict inside it
         extra_fields = getattr(message, "model_extra", None) or getattr(
             message, "extra_content", None
         )
+
+        # Check for reasoning in standard OpenAI message object (e.g. o1/r1 models in some SDK versions)
+        if hasattr(message, "reasoning") and message.reasoning:
+            current_reasoning = message.reasoning
 
         if extra_fields:
             # Handle case where extra_content is nested inside model_extra
@@ -617,11 +714,22 @@ class LLMQuery:
             else:
                 extra_content = extra_fields
 
+            # Check for reasoning in model_extra (OpenRouter standard)
+            if (
+                not current_reasoning
+                and "reasoning" in extra_fields
+                and extra_fields["reasoning"]
+            ):
+                current_reasoning = extra_fields["reasoning"]
+
             # Navigate key path: google -> thought_signature
             if isinstance(extra_content, dict):
                 google_info = extra_content.get("google")
                 if isinstance(google_info, dict):
                     thought_signature = google_info.get("thought_signature")
+
+        # Update reasoning history
+        self.reasoning_history.append(current_reasoning)
 
         # Update state
         self.response = content if content is not None else ""
@@ -809,6 +917,15 @@ class LLMQuery:
                 if xml_tool_calls:
                     self.tool_calls.extend(xml_tool_calls)
 
+            # Sanitize tool calls (on write to history)
+            for tc in self.tool_calls:
+                tc["id"] = self._sanitize_tool_id(tc.get("id"))
+                # Ensure function name is a valid string
+                if not tc.get("function"):
+                    tc["function"] = {"name": "unknown_function", "arguments": "{}"}
+                elif not tc["function"].get("name"):
+                    tc["function"]["name"] = "unknown_function"
+
             self._update_history(
                 user_prompt,
                 output if output else None,
@@ -852,7 +969,7 @@ class LLMQuery:
                 {
                     "role": "tool",
                     "content": output_content,
-                    "tool_call_id": tool_output["tool_call_id"],
+                    "tool_call_id": self._sanitize_tool_id(tool_output["tool_call_id"]),
                 }
             )
 
@@ -932,7 +1049,11 @@ class LLMQuery:
 
             if not query_response and not self.tool_calls:
                 # Retry strategy: If LLM returns empty string after tools ran, prompt it again
-                if self.chat_history and self.chat_history[-1]["role"] == "assistant":
+                if (
+                    self.chat_history
+                    and self.chat_history[-1]["role"] == "assistant"
+                    and not self.chat_history[-1]["content"]
+                ):
                     self.chat_history.pop()
                 query_response = self.query(tools=self.tools)
 
@@ -1108,8 +1229,26 @@ class LLMQuery:
             if should_close and file_obj:
                 file_obj.close()
 
+    def generate_embedding(
+        self,
+        text: List[str],
+        model: Optional[str] = None,
+    ) -> List[List[float]]:
+        """
+        Generate embeddings for a list of texts using the specified model.
 
-if __name__ == "__main__":
-    llm = LLMQuery(system_prompt="", model="gemini-flash-lite-latest")
-    a = llm.query(user_prompt="Hi", display_output=True)
-    print(a)
+        Args:
+            text: A list of strings to generate embeddings for.
+            model: Optional model to use, overriding the default instance embedding_model.
+
+        Returns:
+            List[List[float]]: A list of embedding vectors.
+        """
+        target_model = model if model is not None else self.embedding_model
+        client = self._get_client_for_model(target_model)
+
+        response = client.embeddings.create(
+            model=target_model,
+            input=text,
+        )
+        return [data.embedding for data in response.data]
