@@ -38,6 +38,8 @@ class Batch:
         self.batch_id = None
         self.output_file_id = None
         self.done = False
+        self.status = None
+        self.error = None
         folder = Path("lite") if lite else Path("full")
         self.batches = folder / BATCHES_FOLDER
         self.output = folder / OUTPUT_FOLDER
@@ -84,10 +86,20 @@ class Batch:
 
     def is_ready(self):
         response = groq.batches.retrieve(self.batch_id)
-        status = response.status
-        if status == "completed":
-            self.output_file_id = response.output_file_id
-        return status == "completed"
+        self.status = response.status
+        if self.status == "completed":
+            if response.output_file_id:
+                self.output_file_id = response.output_file_id
+                return True
+            print(f"Batch {self.batch_id} completed but no output file found.")
+            return False
+        elif self.status == "failed":
+            self.error = response.errors
+            print(f"Batch {self.batch_id} failed. Errors: {response.errors}")
+            return False
+        else:
+            print(f"Batch {self.batch_id} status: {self.status}")
+            return False
 
     def fetch_output(self):
         output_file = str(self.output / self.filename)
@@ -117,6 +129,17 @@ class Batch:
     @classmethod
     def run(cls):
         for batch in tqdm(cls.batches):
+            if (batch.output / batch.filename).exists():
+                batch.done = True
+                continue
+            if batch.batch_id:
+                try:
+                    batch.is_ready()
+                    if batch.status != "failed" and batch.error is None:
+                        continue
+                except Exception as e:
+                    print(f"Error checking batch status: {e}")
+                    continue
             batch.make_file()
             batch.send_file()
             batch.submit_batch()
