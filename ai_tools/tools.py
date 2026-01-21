@@ -97,13 +97,13 @@ GeminiModels = Literal[
 ]
 
 OpenRouterModels = Literal[
-    # "anthropic/claude-sonnet-4.5",
+    "anthropic/claude-sonnet-4.5",
     "openai/gpt-oss-120b",
     "openai/gpt-oss-20b",
     "deepseek/deepseek-v3.2",  # top price / intelligence
     "deepseek/deepseek-r1",  # reasoning model
-    # "x-ai/grok-4",
-    # "anthropic/claude-opus-4.5",
+    "x-ai/grok-4",
+    "anthropic/claude-opus-4.5",
     "x-ai/grok-4.1-fast",  # top price / intelligence
     "z-ai/glm-4.7",
     "moonshotai/kimi-k2-thinking",
