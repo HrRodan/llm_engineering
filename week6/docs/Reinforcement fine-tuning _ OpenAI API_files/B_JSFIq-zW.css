@@ -1,0 +1,1 @@
+@layer base{.example-chat-container{overflow:hidden;border-radius:8px;margin:20px 0;background:var(--code-snippet-bg)}.example-chat-messages{padding:10px 0}.example-chat-message{display:grid;padding:8px 16px;grid-template-columns:100px 1fr;white-space:pre-wrap}.example-chat-role{padding-top:5px}.example-chat-code{margin:0}}
