@@ -75,9 +75,13 @@ class DeepNeuralNetworkRunner:
         np.random.seed(42)
         torch.manual_seed(42)
         torch.cuda.manual_seed(42)
+        # L4 OPTIMIZATION: Enable TF32 for faster matrix multiplications on Ampere/Ada GPUs
+        torch.set_float32_matmul_precision("high")
 
     def setup(self):
-        self.vectorizer = HashingVectorizer(n_features=5000, stop_words="english", binary=True)
+        self.vectorizer = HashingVectorizer(
+            n_features=5000, stop_words="english", binary=True
+        )
 
         train_documents = [item.summary for item in self.train_data]
         X_train_np = self.vectorizer.fit_transform(train_documents)
@@ -99,7 +103,9 @@ class DeepNeuralNetworkRunner:
         self.y_val_norm = (y_val_log - self.y_mean) / self.y_std
 
         self.model = DeepNeuralNetwork(self.X_train.shape[1])
-        total_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        total_params = sum(
+            p.numel() for p in self.model.parameters() if p.requires_grad
+        )
         print(f"Deep Neural Network created with {total_params:,} parameters")
 
         if torch.cuda.is_available():
@@ -112,25 +118,54 @@ class DeepNeuralNetworkRunner:
         print(f"Using {self.device}")
 
         self.model.to(self.device)
+        # L4 OPTIMIZATION: Compile the model to fuse kernels and optimize graph execution
+        try:
+            self.model = torch.compile(self.model)
+            print("Model compiled with torch.compile")
+        except Exception as e:
+            print(f"Could not compile model: {e}")
+
         self.loss_function = nn.L1Loss()
-        self.optimizer = optim.AdamW(self.model.parameters(), lr=0.001, weight_decay=0.01)
+        self.optimizer = optim.AdamW(
+            self.model.parameters(), lr=0.001, weight_decay=0.01
+        )
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=10, eta_min=0)
 
         self.train_dataset = TensorDataset(self.X_train, self.y_train_norm)
-        self.train_loader = DataLoader(self.train_dataset, batch_size=64, shuffle=True)
+        # L4 OPTIMIZATION: Increased batch size (64 -> 2048) to saturate the GPU
+        # L4 OPTIMIZATION: Added pin_memory=True for faster host-to-device transfer
+        # L4 OPTIMIZATION: Added num_workers=2 to prefetch data
+        self.train_loader = DataLoader(
+            self.train_dataset,
+            batch_size=2048,
+            shuffle=True,
+            pin_memory=True,
+            num_workers=2,
+        )
 
     def train(self, epochs=5):
-        for epoch in range(1, epochs + 1):
+        # L4 OPTIMIZATION: Added tqdm to outer loop for overall progress
+        for epoch in tqdm(range(1, epochs + 1), desc="Epochs"):
             self.model.train()
             train_losses = []
 
-            for batch_X, batch_y in tqdm(self.train_loader):
-                batch_X = batch_X.to(self.device)
-                batch_y = batch_y.to(self.device)
+            # L4 OPTIMIZATION: Improved tqdm for batch processing
+            batch_iterator = tqdm(
+                self.train_loader, desc=f"Training epoch {epoch}", leave=False
+            )
+            for batch_X, batch_y in batch_iterator:
+                batch_X = batch_X.to(
+                    self.device, non_blocking=True
+                )  # L4 OPTIMIZATION: non_blocking for overlap
+                batch_y = batch_y.to(self.device, non_blocking=True)
 
                 self.optimizer.zero_grad()
-                outputs = self.model(batch_X)
-                loss = self.loss_function(outputs, batch_y)
+
+                # L4 OPTIMIZATION: Mixed Precision training with BFloat16 (native on L4)
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    outputs = self.model(batch_X)
+                    loss = self.loss_function(outputs, batch_y)
+
                 loss.backward()
 
                 # Gradient clipping
@@ -139,11 +174,16 @@ class DeepNeuralNetworkRunner:
                 self.optimizer.step()
                 train_losses.append(loss.item())
 
+                # Update progress bar with current loss
+                batch_iterator.set_postfix({"loss": f"{loss.item():.4f}"})
+
             # Validation
             self.model.eval()
             with torch.no_grad():
                 val_outputs = self.model(self.X_val.to(self.device))
-                val_loss = self.loss_function(val_outputs, self.y_val_norm.to(self.device))
+                val_loss = self.loss_function(
+                    val_outputs, self.y_val_norm.to(self.device)
+                )
 
                 # Convert back to original scale for meaningful metrics
                 val_outputs_orig = torch.exp(val_outputs * self.y_std + self.y_mean) - 1
