@@ -117,11 +117,21 @@ class DeepNeuralNetworkRunner:
 
         print(f"Using {self.device}")
 
+        # L4 OPTIMIZATION: Move data to GPU immediately to avoid host-to-device transfer overhead
+        self.X_train = self.X_train.to(self.device)
+        self.y_train_norm = self.y_train_norm.to(self.device)
+
+        # Validation data to GPU as well
+        self.X_val = self.X_val.to(self.device)
+        self.y_val_norm = self.y_val_norm.to(self.device)
+        self.y_val = self.y_val.to(self.device)
+
         self.model.to(self.device)
         # L4 OPTIMIZATION: Compile the model to fuse kernels and optimize graph execution
+        # mode="reduce-overhead" is crucial for small batches
         try:
-            self.model = torch.compile(self.model)
-            print("Model compiled with torch.compile")
+            self.model = torch.compile(self.model, mode="reduce-overhead")
+            print("Model compiled with torch.compile(mode='reduce-overhead')")
         except Exception as e:
             print(f"Could not compile model: {e}")
 
@@ -131,33 +141,38 @@ class DeepNeuralNetworkRunner:
         )
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=10, eta_min=0)
 
-        self.train_dataset = TensorDataset(self.X_train, self.y_train_norm)
-        # L4 OPTIMIZATION: Increased batch size (64 -> 2048) to saturate the GPU
-        # L4 OPTIMIZATION: Added pin_memory=True for faster host-to-device transfer
-        # L4 OPTIMIZATION: Added num_workers=2 to prefetch data
-        self.train_loader = DataLoader(
-            self.train_dataset,
-            batch_size=2048,
-            shuffle=True,
-            pin_memory=True,
-            num_workers=2,
-        )
+        # L4 OPTIMIZATION: Removed DataLoader. We will manually batch on GPU.
+        # This eliminates the iterator overhead which is significant for small batches.
+        self.batch_size = 512
 
     def train(self, epochs=5):
         # L4 OPTIMIZATION: Added tqdm to outer loop for overall progress
+        # L4 OPTIMIZATION: Manual batching on GPU
+        num_samples = self.X_train.shape[0]
+
         for epoch in tqdm(range(1, epochs + 1), desc="Epochs"):
             self.model.train()
             train_losses = []
 
-            # L4 OPTIMIZATION: Improved tqdm for batch processing
-            batch_iterator = tqdm(
-                self.train_loader, desc=f"Training epoch {epoch}", leave=False
-            )
-            for batch_X, batch_y in batch_iterator:
-                batch_X = batch_X.to(
-                    self.device, non_blocking=True
-                )  # L4 OPTIMIZATION: non_blocking for overlap
-                batch_y = batch_y.to(self.device, non_blocking=True)
+            # Shuffle indices on GPU
+            indices = torch.randperm(num_samples, device=self.device)
+
+            # Helper to generate batches
+            num_batches = (num_samples + self.batch_size - 1) // self.batch_size
+
+            # Iterate through batches
+            # Using range acts as the iterator, we slice the tensors directly
+            for i in tqdm(
+                range(num_batches), desc=f"Training epoch {epoch}", leave=False
+            ):
+                start_idx = i * self.batch_size
+                end_idx = min(start_idx + self.batch_size, num_samples)
+
+                batch_indices = indices[start_idx:end_idx]
+
+                # Data is already on device, just slice it
+                batch_X = self.X_train[batch_indices]
+                batch_y = self.y_train_norm[batch_indices]
 
                 self.optimizer.zero_grad()
 
@@ -174,20 +189,16 @@ class DeepNeuralNetworkRunner:
                 self.optimizer.step()
                 train_losses.append(loss.item())
 
-                # Update progress bar with current loss
-                batch_iterator.set_postfix({"loss": f"{loss.item():.4f}"})
-
             # Validation
             self.model.eval()
             with torch.no_grad():
-                val_outputs = self.model(self.X_val.to(self.device))
-                val_loss = self.loss_function(
-                    val_outputs, self.y_val_norm.to(self.device)
-                )
+                # Data already on device
+                val_outputs = self.model(self.X_val)
+                val_loss = self.loss_function(val_outputs, self.y_val_norm)
 
                 # Convert back to original scale for meaningful metrics
                 val_outputs_orig = torch.exp(val_outputs * self.y_std + self.y_mean) - 1
-                mae = torch.abs(val_outputs_orig - self.y_val.to(self.device)).mean()
+                mae = torch.abs(val_outputs_orig - self.y_val).mean()
 
             avg_train_loss = np.mean(train_losses)
             print(f"Epoch [{epoch}/{epochs}]")
