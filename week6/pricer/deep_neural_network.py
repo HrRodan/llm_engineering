@@ -127,6 +127,7 @@ class DeepNeuralNetworkRunner:
         self.y_val = self.y_val.to(self.device)
 
         self.model.to(self.device)
+        self.model_raw = self.model
         # L4 OPTIMIZATION: Compile the model to fuse kernels and optimize graph execution
         # mode="reduce-overhead" is crucial for small batches
         try:
@@ -143,7 +144,7 @@ class DeepNeuralNetworkRunner:
 
         # L4 OPTIMIZATION: Removed DataLoader. We will manually batch on GPU.
         # This eliminates the iterator overhead which is significant for small batches.
-        self.batch_size = 512
+        self.batch_size = 256
 
     def train(self, epochs=5):
         # L4 OPTIMIZATION: Added tqdm to outer loop for overall progress
@@ -220,7 +221,7 @@ class DeepNeuralNetworkRunner:
         with torch.no_grad():
             vector = self.vectorizer.transform([item.summary])
             vector = torch.FloatTensor(vector.toarray()).to(self.device)
-            pred = self.model(vector)[0]
+            pred = self.model_raw(vector)[0]
             result = torch.exp(pred * self.y_std + self.y_mean) - 1
             result = result.item()
         return max(0, result)
