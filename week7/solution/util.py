@@ -32,7 +32,12 @@ class Tester:
 
     @staticmethod
     def make_title(predictor) -> str:
-        return predictor.__name__.replace("__", ".").replace("_", " ").title().replace("Gpt", "GPT")
+        return (
+            predictor.__name__.replace("__", ".")
+            .replace("_", " ")
+            .title()
+            .replace("Gpt", "GPT")
+        )
 
     @staticmethod
     def post_process(value):
@@ -117,7 +122,8 @@ class Tester:
         fig.update_xaxes(range=[0, max_val])
         fig.update_yaxes(range=[0, max_val])
         fig.update_layout(showlegend=False)
-        fig.show()
+        # Using renderer="notebook" for compatibility with VS Code Colab extension
+        fig.show(renderer="notebook")
 
     def error_trend_chart(self):
         n = len(self.errors)
@@ -134,7 +140,9 @@ class Tester:
         ]
 
         # 95% confidence interval for mean
-        ci = [1.96 * (sd / math.sqrt(i)) if i > 1 else 0 for i, sd in zip(x, running_stds)]
+        ci = [
+            1.96 * (sd / math.sqrt(i)) if i > 1 else 0 for i, sd in zip(x, running_stds)
+        ]
         upper = [m + c for m, c in zip(running_means, ci)]
         lower = [m - c for m, c in zip(running_means, ci)]
 
@@ -193,7 +201,8 @@ class Tester:
             showlegend=False,
         )
 
-        fig.show()
+        # Using renderer="notebook" for compatibility with VS Code Colab extension
+        fig.show(renderer="notebook")
 
     def report(self):
         average_error = sum(self.errors) / self.size
