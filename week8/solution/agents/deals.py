@@ -8,13 +8,9 @@ import requests
 import time
 
 feeds = [
-    "https://www.dealnews.com/c142/Electronics/?rss=1",
-    "https://www.dealnews.com/c39/Computers/?rss=1",
-    "https://www.dealnews.com/f1912/Smart-Home/?rss=1",
+    "https://www.mydealz.de/rss/alles",
+    "https://www.mydealz.de/rssx/keyword-alarm/gScRn4Onx8DksO58d47q_vyHN6S3L79YItXsAImGzl8.",
 ]
-
-# You could also add: "https://www.dealnews.com/c238/Automotive/?rss=1"
-# "https://www.dealnews.com/c196/Home-Garden/?rss=1"
 
 
 def extract(html_snippet: str) -> str:
@@ -22,16 +18,12 @@ def extract(html_snippet: str) -> str:
     Use Beautiful Soup to clean up this HTML snippet and extract useful text
     """
     soup = BeautifulSoup(html_snippet, "html.parser")
-    snippet_div = soup.find("div", class_="snippet summary")
+    content = soup.find("div", class_="snippet summary") or soup
 
-    if snippet_div:
-        description = snippet_div.get_text(strip=True)
-        description = BeautifulSoup(description, "html.parser").get_text()
-        description = re.sub("<[^<]+?>", "", description)
-        result = description.strip()
-    else:
-        result = html_snippet
-    return result.replace("\n", " ")
+    text = content.get_text(separator=" ", strip=True)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    return text
 
 
 class ScrapedDeal:
@@ -50,18 +42,50 @@ class ScrapedDeal:
         """
         Populate this instance based on the provided dict
         """
-        self.title = entry["title"]
-        self.summary = extract(entry["summary"])
-        self.url = entry["links"][0]["href"]
-        stuff = requests.get(self.url).content
-        soup = BeautifulSoup(stuff, "html.parser")
-        content = soup.find("div", class_="content-section").get_text()
-        content = content.replace("\nmore", "").replace("\n", " ")
-        if "Features" in content:
-            self.details, self.features = content.split("Features", 1)
-        else:
-            self.details = content
+        self.title = entry.get("title", "No Title")
+        self.url = entry.get("link", "")
+        if "links" in entry and entry["links"]:
+            self.url = entry["links"][0]["href"]
+
+        summary_html = entry.get("summary", "")
+        self.summary = extract(summary_html)
+
+        # Handle MyDealz/Pepper specific fields
+        self.price = ""
+        self.merchant = ""
+
+        if "pepper_merchant" in entry:
+            merchant_info = entry["pepper_merchant"]
+            self.merchant = merchant_info.get("name", "")
+            self.price = merchant_info.get("price", "")
+            if self.price:
+                self.title = f"{self.title} ({self.price})"
+
+        # Decide whether to fetch external content
+        # MyDealz feeds usually have a good description in the RSS summary
+        if "pepper_merchant" in entry or len(self.summary) > 200:
+            self.details = self.summary
             self.features = ""
+        else:
+            try:
+                stuff = requests.get(self.url, timeout=5).content
+                soup = BeautifulSoup(stuff, "html.parser")
+                content_div = soup.find("div", class_="content-section")
+                if content_div:
+                    content = content_div.get_text()
+                    content = content.replace("\nmore", "").replace("\n", " ")
+                    if "Features" in content:
+                        self.details, self.features = content.split("Features", 1)
+                    else:
+                        self.details = content
+                        self.features = ""
+                else:
+                    self.details = self.summary
+                    self.features = ""
+            except Exception:
+                self.details = self.summary
+                self.features = ""
+
         self.truncate()
 
     def truncate(self):
@@ -93,7 +117,7 @@ class ScrapedDeal:
         feed_iter = tqdm(feeds) if show_progress else feeds
         for feed_url in feed_iter:
             feed = feedparser.parse(feed_url)
-            for entry in feed.entries[:10]:
+            for entry in feed.entries[:20]:
                 deals.append(cls(entry))
                 time.sleep(0.05)
         return deals

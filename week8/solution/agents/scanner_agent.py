@@ -14,7 +14,7 @@ class ScannerAgent(Agent):
     """
 
     USER_PROMPT_PREFIX = """Respond with the most promising 5 deals from this list, selecting those which have the most detailed, high quality product description and a clear price that is greater than 0.
-    You should rephrase the description to be a summary of the product itself, not the terms of the deal.
+    You should rephrase the description to be a **english** summary of the product itself, not the terms of the deal.
     Remember to respond with a short paragraph of text in the product_description field for each of the 5 items that you select.
     Be careful with products that are described as "$XXX off" or "reduced by $XXX" - this isn't the actual price of the product. Only respond with products when you are highly confident about the price. 
     
